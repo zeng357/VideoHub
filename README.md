@@ -82,16 +82,16 @@ If a module is missing: `pip install <module>` and restart.
 
 Full 15-item FAQ: `1_Documentation/FAQ.md`.
 
-## 7. Disclaimer (EN)
+## 7. Disclaimer / 免责声明
 
-**This software (VideoHub) is for learning and personal use only. Commercial use is prohibited.**
+**This software (VideoHub) is for learning and personal use only. Commercial use is prohibited. / 本软件（通用视频下载器）仅供学习交流使用，请勿用于商业用途。**
 
-1. **Purpose**: for learning browser automation, crawling, and audio/video processing only; download only content you are **entitled** to (your own works, authorized resources, public free content).
-2. **Copyright**: content belongs to the original creators and platforms; do not download or redistribute protected content without authorization (paid films, member-only content, unauthorized reprints); support the original creators.
-3. **Responsibility**: users must follow local laws and the target site's Terms of Service; any legal consequences are the user's own responsibility.
-4. **Technical boundary**: this tool contains no cracking or paywall-bypass features; logged-in/paid content is to be used within legal authorization; sites may change APIs or enable anti-crawling at any time.
-5. **Site stability**: third-party sites (e.g., weak servers) may be temporarily unavailable due to rate limiting or maintenance; use responsibly and do not stress target sites.
+1. **Purpose / 用途限制**: for learning browser automation, crawling, and audio/video processing only; download only content you are **entitled** to (your own works, authorized resources, public free content). / 本工具仅用于学习浏览器自动化、网络爬虫、音视频处理等技术原理，以及下载您**有权获取**的内容（如自己发布的作品、已获授权的资源、公开免费资源）。
+2. **Copyright / 版权提示**: content belongs to the original creators and platforms; do not download or redistribute protected content without authorization (paid films, member-only content, unauthorized reprints); support the original creators. / 各视频网站的内容版权归原作者及平台所有；未经版权方授权，请勿下载、传播受版权保护的内容（付费影视、会员专享、未授权转载等）；请尊重创作者与版权方权益，支持正版。
+3. **Responsibility / 使用责任**: users must follow local laws and the target site's Terms of Service; any legal consequences are the user's own responsibility. / 使用者应遵守所在国家/地区的法律法规及目标网站的《用户协议》《服务条款》；因使用本工具产生的任何法律后果，由使用者自行承担。
+4. **Technical boundary / 技术边界**: this tool contains no cracking or paywall-bypass features; logged-in/paid content is to be used within legal authorization; sites may change APIs or enable anti-crawling at any time. / 本工具不含任何破解、绕过付费或权限验证的功能；需要登录/付费的内容，请自行在合法授权范围内使用；目标网站可能随时调整接口或启用风控。
+5. **Site stability / 站点稳定性**: third-party sites (e.g., weak servers) may be temporarily unavailable due to rate limiting or maintenance; use responsibly and do not stress target sites. / 第三方站点（如服务器较弱的站点）可能因限流、维护等原因暂时不可用，请理性使用、合理控制访问频率，勿对目标网站造成压力。
 
-**Download only what you are entitled to; respect copyright.**
+**Download only what you are entitled to; respect copyright. / 请仅下载您有权获取的内容，尊重版权方权益。**
 
-中文版见 `1_Documentation/Disclaimer.md`（中英双语）。
+Full bilingual version: `1_Documentation/Disclaimer.md` / 完整中英双语版见 `1_Documentation/Disclaimer.md`。
