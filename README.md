@@ -1,5 +1,23 @@
-# Welcome to GitHub Desktop!
+# 通用视频下载器（多站点视频批量下载工具）
 
-This is your README. READMEs are where you can communicate what your project is and how to use it.
+使用说明见：《①使用说明与文档/使用说明.md》（主界面各功能区 + 五步上手 + 各站点用法 + 常见问题）；原理见《原理说明.md》，声明见《免责声明.md》。
 
-Write your name on line 6, save it, and then head back to GitHub Desktop.
+一个可运行在 Windows 电脑上的视频下载工具，支持多个视频网站：内置爬虫（AGE动漫、哔哩哔哩、樱花动漫、抖音精选、自动扫描）+ 插件化站点扩展——把 `sites_data/` 放入新站点插件即自动注册；支持站内搜索加载剧集表、勾选单集/整部/全部、选择速度档（极速/高速/标准/平稳）一键批量下载；B站视频自动合成音视频为单个 mp4；抖音精选支持人控随机抓取。
+
+## 快速开始
+
+```bash
+pip install -r requirements.txt
+一键启动.bat        # 或 python gui.py
+```
+
+站点选「AGE动漫 / 樱花动漫 / 哔哩哔哩」→ 填剧名 → 加载剧集表 → 勾选 → 选速度 → 开始下载。
+
+## 仓库结构
+
+| 目录 | 内容 |
+|------|------|
+| ①使用说明与文档 | 使用说明.md / 原理说明.md / 免责声明.md / 界面使用说明.html |
+| ②程序源码 | 全部源码 + requirements.txt + 一键启动.bat |
+| ③站点扩展与工具 | sites_data/ 站点插件 + 开发模板 |
+| ④安装包 | 通用视频下载器_完整版_v1.0.zip（解压即用） |
