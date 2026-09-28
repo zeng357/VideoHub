@@ -1,6 +1,6 @@
 # Disclaimer / 免责声明
 
-**This software (VideoHub) is provided for learning and personal use only. Commercial use is prohibited. / 本软件（通用视频下载器）仅供学习交流使用，请勿用于商业用途。**
+**This software (VideoToolkit) is provided for learning and personal use only. Commercial use is prohibited. / 本软件（通用视频下载器）仅供学习交流使用，请勿用于商业用途。**
 
 ## English / 英文
 

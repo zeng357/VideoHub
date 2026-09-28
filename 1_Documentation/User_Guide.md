@@ -1,4 +1,4 @@
-# VideoHub User Guide / 使用说明（English）
+# VideoToolkit User Guide / 使用说明（English）
 
 ## UI Overview
 

@@ -2,7 +2,7 @@
 
 ## Architecture
 
-VideoHub is a Python GUI application that combines browser automation with HTTP downloading:
+VideoToolkit is a Python GUI application that combines browser automation with HTTP downloading:
 
 ```
 GUI (gui.py)

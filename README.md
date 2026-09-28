@@ -1,4 +1,4 @@
-# VideoHub · Multi-Site Video Batch Downloader
+# VideoToolkit · Multi-Site Video Batch Downloader
 
 🎬 See also: `1_Documentation/User_Guide.md` (UI areas + 5-step quick start + site usage + FAQ) | `How_It_Works.md` (principles) | `Disclaimer.md` (bilingual) | `FAQ.md`.
 
@@ -84,7 +84,7 @@ Full 15-item FAQ: `1_Documentation/FAQ.md`.
 
 ## 7. Disclaimer / 免责声明
 
-**This software (VideoHub) is for learning and personal use only. Commercial use is prohibited. / 本软件（通用视频下载器）仅供学习交流使用，请勿用于商业用途。**
+**This software (VideoToolkit) is for learning and personal use only. Commercial use is prohibited. / 本软件（通用视频下载器）仅供学习交流使用，请勿用于商业用途。**
 
 1. **Purpose / 用途限制**: for learning browser automation, crawling, and audio/video processing only; download only content you are **entitled** to (your own works, authorized resources, public free content). / 本工具仅用于学习浏览器自动化、网络爬虫、音视频处理等技术原理，以及下载您**有权获取**的内容（如自己发布的作品、已获授权的资源、公开免费资源）。
 2. **Copyright / 版权提示**: content belongs to the original creators and platforms; do not download or redistribute protected content without authorization (paid films, member-only content, unauthorized reprints); support the original creators. / 各视频网站的内容版权归原作者及平台所有；未经版权方授权，请勿下载、传播受版权保护的内容（付费影视、会员专享、未授权转载等）；请尊重创作者与版权方权益，支持正版。

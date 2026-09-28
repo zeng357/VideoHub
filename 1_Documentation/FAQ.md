@@ -1,4 +1,4 @@
-# VideoHub FAQ / 常见问题（English）
+# VideoToolkit FAQ / 常见问题（English）
 
 ## Startup & Environment
 
