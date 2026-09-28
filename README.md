@@ -1,101 +1,97 @@
-# 通用视频下载器 · 多站点视频批量下载工具（VideoHub）
+# VideoHub · Multi-Site Video Batch Downloader
 
-🎬 使用说明见：《①使用说明与文档/使用说明.md》（主界面各功能区 + 五步上手 + 各站点用法 + 常见问题）；原理见《原理说明.md》，声明见《免责声明.md》，问题见《常见问题.md》。
+🎬 See also: `1_Documentation/User_Guide.md` (UI areas + 5-step quick start + site usage + FAQ) | `How_It_Works.md` (principles) | `Disclaimer.md` (bilingual) | `FAQ.md`.
 
-一个可运行在 Windows 电脑上的视频下载工具，支持多个视频网站：内置爬虫（A\*\*动漫、B\*\*弹幕视频、Y\*\*动漫、D\*\*短视频、自动扫描）+ 插件化站点扩展——把新站点插件放入 `sites_data/` 即自动注册；支持站内搜索加载剧集表、勾选单集/整部/全部、选择速度档（极速/高速/标准/平稳）一键批量下载；B\*\* 视频自动合成音视频为单个 mp4；D\*\* 短视频支持人控随机抓取。
+A video downloader that runs on Windows and supports multiple video sites: built-in crawlers (A** Anime, B** Bullet-Screen Video, Y** Anime, D** Short Video, Auto-Scan) + a plugin-based site extension system — drop a new site plugin into `sites_data/` and it registers automatically. Features: in-site search to load episode tables, check individual / whole / all episodes, choose a speed tier (Turbo / Fast / Standard / Steady) and batch download with one click; B** videos are auto-muxed into a single mp4 (audio + video); D** short videos support human-controlled random grabbing.
 
 ---
 
-## 一、界面使用说明
+## 1. UI Guide
 
-程序启动后（双击「一键启动.bat」）打开深色主界面，从上到下依次是：
+After launching (double-click `start.bat`), the dark-themed main window contains:
 
-| 区域 | 操作说明 |
+| Area | Description |
 |---|---|
-| 左侧站点导航 | 下拉/点击选择视频网站（内置站点 + 插件站点都在这里） |
-| 地址/关键词栏 | 输入剧名简称或原名；或填入站点主页地址（自动扫描模式） |
-| 搜索按钮 | 在所选网站搜索该剧；搜索后定位到目标剧集主页（保证后续剧集表正确） |
-| 加载剧情/扫描 | 先检测该剧**总集数**，再按集数读取完整剧集列表（含滚动加载，避免只拿到第一集） |
-| 剧集表 | 全选/勾选要下载的集；支持单集、整部、全部 |
-| 速度档选择 | 极速（32线程）/ 高速 / 标准（6线程）/ 平稳（最稳）。**先选好速度，再点下载** |
-| 开始下载 | 按勾选顺序批量下载；底部双进度条（总进度 + 单集进度）+ 网速显示 |
-| 日志窗口 | 实时显示每一步日志（搜索→扫描→下载→合成→完成），出错原因直接显示在这里 |
-| 完成提示 | 下载完成后弹窗提示，视频保存到 `下载/站点名/剧名/集数/` |
+| Left site nav | Choose a video site (built-in sites + plugin sites) |
+| Keyword / address bar | Enter a title keyword, or a site homepage URL (Auto-Scan mode) |
+| Search button | Searches the selected site and locates the target series page |
+| Load episodes | First detects the **total episode count**, then reads the full episode list (auto-scroll, no more "only episode 1") |
+| Episode table | Check single episodes, a range, or all |
+| Speed tier | Turbo (32 threads) / Fast / High / Standard (6) / Steady. **Pick speed first, then click Download** |
+| Start download | Batch download checked episodes; dual progress bars + speed |
+| Log window | Live log of search → scan → download → mux → done; errors shown here |
+| Done notice | Popup when finished; videos saved to `Download/<site>/<title>/<ep>/` |
 
-> **黑窗口不要关闭**：程序下载依赖它显示进度；想完全退出时关闭黑色控制台窗口或主界面即可。
+> **Keep the black console window open**: the program shows progress there. Close the console or the main window to exit.
 
-## 二、支持的网站
+## 2. Supported Sites
 
-| 站点 | 说明 |
+| Site | Notes |
 |---|---|
-| A\*\*动漫 | 搜索 `/search?wd=`，详情 `/detail/{id}`；支持**多播放源自动切换**：第一个播放源解析失败自动尝试下一个，并去重保留可用线路 |
-| B\*\*弹幕视频 | 搜索站内；音视频分离（DASH），程序自动调用 ffmpeg 合成 mp4；需登录的番剧请在浏览器登录后把 Cookie 填入界面「B\*\* Cookie」栏 |
-| Y\*\*动漫 | 搜索 `/video-search/...html?wd=`，播放 `/video-play/...html`；若站点改版请更新插件 |
-| D\*\*短视频 | 精选页随机抓取：点击「🎲 随机抓取」按钮（点击后变为「停止」），按设定的抓取时长/数量人控抓取，无水印 mp4 直链 |
-| 自动扫描 | 填写站点主页地址，自动列出主页全部视频名称，可勾选单个/多个/全部下载 |
-| 插件站点 | 站点插件放入 `sites_data/` 后自动注册到导航 |
+| A** Anime | Search `/search?wd=`, detail `/detail/{id}`; **auto-switch between multiple sources** if one fails |
+| B** Bullet-Screen Video | Audio/video are separate (DASH); the app auto-muxes via ffmpeg. For login-gated episodes, log in in your browser and paste the Cookie into the "B** Cookie" field |
+| Y** Anime | Search `/video-search/...html?wd=`, play `/video-play/...html`; update plugin if site changes |
+| D** Short Video | Random grab on the featured page: click "🎲 Random Grab" (turns into "Stop"), human-controlled by time/count; watermarked-free mp4 direct links |
+| Auto-Scan | Enter a homepage URL; list all videos and check single / multiple / all |
+| Plugin sites | Put a plugin in `sites_data/` and restart; auto-registered |
 
-## 三、添加任意新网站（站点插件）
+## 3. Adding a New Site (Plugin)
 
-### 不会写代码 → 使用现成插件
-在 `③站点扩展与工具/sites_data/` 中复制一份 `template_crawler.example.py`，按模板填写搜索/剧集/播放页规则，保存后重启程序即自动注册。
+**No code → use a template**: copy `3_Site_Extensions/sites_data/template_crawler.example.py`, fill in the search / episode / play-page rules, save, restart.
 
-### 会写 Python → 三个接口
-1. 复制模板为 `<站点名>_crawler.py`；
-2. 实现三个接口：
-   - `search_series(keyword)`：返回候选剧集 `[{url, title}]`
-   - `get_episode_count(url)`：返回该剧**总集数**
-   - `collect_episode_videos(url, count)`：按集收集视频地址
-3. 返回格式：`[{episode_num, title, video_url, video_type, referer}]`；
-4. 放入 `sites_data/`，重启程序自动注册。
+**Python → three interfaces**:
+1. Copy template to `<site>_crawler.py`;
+2. Implement: `search_series(keyword)` → `[{url, title}]`; `get_episode_count(url)` → total; `collect_episode_videos(url, count)` → per-episode video URLs;
+3. Return format: `[{episode_num, title, video_url, video_type, referer}]`;
+4. Place in `sites_data/`, restart.
 
-## 四、环境与安装
+## 4. Environment & Install
 
-需要 Python 3.10+（验证环境：Python 3.10），依赖：
+Requires Python 3.10+ (verified on 3.10):
 
-| 依赖 | 用途 |
+| Dependency | Purpose |
 |---|---|
-| DrissionPage | 浏览器自动化（站点扫描/播放页解析） |
-| aiohttp / aiofiles | 并发下载 |
-| pycryptodome | B\*\* 视频流解密（AES-128） |
-| requests / lxml | 页面请求与解析 |
-
-安装依赖（命令行）：
+| DrissionPage | Browser automation (scan / play-page parsing) |
+| aiohttp / aiofiles | Concurrent downloads |
+| pycryptodome | B** stream decryption (AES-128) |
+| requests / lxml | HTTP + parsing |
 
 ```bash
 pip install -r requirements.txt
 ```
 
-**ffmpeg**（B\*\* 音视频合成必需）：从 ffmpeg 官网下载 Windows 版，解压后确保 `C:\Program Files\ffmpe\bin\ffmpeg.exe` 存在（或修改 `config.py` 中路径）。
+**ffmpeg** (required for B** audio/video mux): install from ffmpeg.org; make sure `C:\Program Files\ffmpe\bin\ffmpeg.exe` exists (or edit `config.py`).
 
-## 五、一键启动
+## 5. One-Click Start
 
-解压后双击 `一键启动.bat` 即可（脚本自动检测 Python、检查依赖、启动图形界面）。
+Unzip and double-click `start.bat` (auto-checks Python, dependencies, and launches the GUI).
 
-若提示缺模块：`pip install <模块名>` 后再启动。
+If a module is missing: `pip install <module>` and restart.
 
-## 六、常见问题（FAQ）
+## 6. FAQ
 
-| 问题 | 原因与解决 |
+| Problem | Cause / Solution |
 |---|---|
-| 黑色窗口一闪而过 | Python 未装 / 依赖未装；命令行 `python gui.py` 看报错 |
-| 只下载第一集 | 旧版懒加载 bug，新版已修复；勾选前确认列表显示全部集数 |
-| 点击下载卡住 | 先选速度档再点下载；关闭代理/VPN；程序内置 90 秒看门狗会自动中断提示 |
-| 被站点限流/风控 | 改用标准/平稳档，暂停几小时再试；程序已带随机延时+UA轮换+模拟滚动 |
-| B\*\* 视频没声音 | 音视频分离，确认 ffmpeg 已安装且 `config.py` 路径正确 |
-| 搜索乱码/跳主页 | 站点改版或搜索链接格式变化，更新对应爬虫插件 |
-| 第一个播放源打不开 | 程序自动切换下一个播放源，并去重保留可用线路 |
+| Black window closes instantly | Python / deps missing; run `python gui.py` from a terminal to see the error |
+| Only episode 1 downloads | Old lazy-load bug; fixed. Confirm the table shows all episodes before checking |
+| Download hangs on click | Pick a speed tier first; disable proxy/VPN; the built-in 90s watchdog auto-interrupts |
+| Rate-limited / blocked by site | Switch to Standard/Steady; wait a few hours; the app already adds random delays + UA rotation + simulated scroll |
+| B** video has no audio | DASH split; check ffmpeg installed and `config.py` path |
+| Search garbled / back to homepage | Site revamped; update the plugin |
+| First source fails | App auto-switches to the next source and keeps the working one |
 
-完整 15 个问题与解决见《①使用说明与文档/常见问题.md》。
+Full 15-item FAQ: `1_Documentation/FAQ.md`.
 
-## 七、免责声明
+## 7. Disclaimer (EN)
 
-**本软件（通用视频下载器）仅供学习交流使用，请勿用于商业用途。**
+**This software (VideoHub) is for learning and personal use only. Commercial use is prohibited.**
 
-1. **用途限制**：本工具仅用于学习浏览器自动化、网络爬虫、音视频处理等技术原理，以及下载您**有权获取**的内容（如自己发布的作品、已获授权的资源、公开免费资源）。
-2. **版权提示**：各视频网站的内容版权归原作者及平台所有；未经版权方授权，请勿下载、传播受版权保护的内容（付费影视、会员专享、未授权转载等）；请尊重创作者与版权方的权益，支持正版。
-3. **使用责任**：使用者应遵守所在国家/地区的法律法规及目标网站的《用户协议》《服务条款》；因使用本工具产生的任何法律后果，由使用者自行承担，本项目作者不承担责任。
-4. **技术边界**：本工具不含任何破解、绕过付费或权限验证的功能；需要登录/付费的内容请自行在合法授权范围内使用；目标网站可能随时调整接口或启用风控，本工具不保证永久可用。
-5. **站点稳定性**：第三方站点（如服务器较弱的站点）可能因限流、维护等原因暂时不可用，请理性使用、合理控制访问频率，勿对目标网站造成压力。
+1. **Purpose**: for learning browser automation, crawling, and audio/video processing only; download only content you are **entitled** to (your own works, authorized resources, public free content).
+2. **Copyright**: content belongs to the original creators and platforms; do not download or redistribute protected content without authorization (paid films, member-only content, unauthorized reprints); support the original creators.
+3. **Responsibility**: users must follow local laws and the target site's Terms of Service; any legal consequences are the user's own responsibility.
+4. **Technical boundary**: this tool contains no cracking or paywall-bypass features; logged-in/paid content is to be used within legal authorization; sites may change APIs or enable anti-crawling at any time.
+5. **Site stability**: third-party sites (e.g., weak servers) may be temporarily unavailable due to rate limiting or maintenance; use responsibly and do not stress target sites.
 
-**请仅下载您有权获取的内容，尊重版权方权益。**
+**Download only what you are entitled to; respect copyright.**
+
+中文版见 `1_Documentation/Disclaimer.md`（中英双语）。
