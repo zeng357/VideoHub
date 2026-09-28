@@ -1,5 +1,0 @@
-# 运行依赖（与漫画下载器一致，另加 pycryptodome 用于 HLS AES-128 解密）
-DrissionPage>=4.0
-requests
-aiohttp
-pycryptodome
