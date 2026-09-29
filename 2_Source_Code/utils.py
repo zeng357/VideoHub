@@ -4,6 +4,13 @@ import sys
 import time
 
 
+def app_base():
+    """程序数据根目录：PyInstaller 打包后=exe 所在目录；源码运行=脚本所在目录"""
+    if getattr(sys, 'frozen', False):
+        return os.path.dirname(os.path.abspath(sys.executable))
+    return os.path.dirname(os.path.abspath(__file__))
+
+
 def ensure_console_safe():
     """入口加固：避免 GBK 控制台打印特殊字符崩溃、无控制台环境下 print 崩溃。
 

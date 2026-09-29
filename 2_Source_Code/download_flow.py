@@ -150,7 +150,8 @@ def run_auto_scan(crawler, url, keyword=None, download_path=None, log=print,
 def run_site_download(crawler, name, episode_start=1, episode_end=0,
                       download_path=None, log=print, url_progress_callback=None,
                       progress_callback=None, pre_collect_hook=None, episode_callback=None,
-                      max_workers=6, use_ffmpeg=True, timeout=20, collect_only=False):
+                      max_workers=6, use_ffmpeg=True, timeout=20, collect_only=False,
+                      range_selector=None):
     """搜索剧集 → 收集各集视频地址 → 逐集下载"""
     name = name.strip()
     if not name:
@@ -184,12 +185,26 @@ def run_site_download(crawler, name, episode_start=1, episode_end=0,
 
     actual_start = max(episode_start, 1)
     actual_end = min(episode_end, total) if episode_end > 0 else total
+    # 超过50集且未指定范围：让 GUI 弹三选一（停止/选择范围/全部）
+    if range_selector is not None and total > 50 and episode_end <= 0:
+        log(f"总集数: {total}（超过50集，等待选择爬取方式...）")
+        picked = range_selector(total)
+        if picked is None:
+            log("已选择「停止」，未收集视频地址（可重新加载剧集表）")
+            return {'eps': [], 'total': 0, 'cancelled': True}
+        actual_start, actual_end = picked
+        actual_start = max(actual_start, 1)
+        actual_end = min(actual_end, total) if actual_end > 0 else total
     actual_count = actual_end - actual_start + 1
-    log(f"总集数: {total}, 将下载: 第{actual_start}-{actual_end}集 共{actual_count}集")
+    log(f"总集数: {total}, 将爬取: 第{actual_start}-{actual_end}集 共{actual_count}集")
     if pre_collect_hook:
         pre_collect_hook(actual_count)
 
-    log("正在收集各集视频地址...")
+    gap = getattr(crawler, 'COLLECT_GAP', 0) or 0
+    workers = getattr(crawler, 'COLLECT_WORKERS', 1) or 1
+    est = int(actual_count * (gap + 1.5) / max(workers, 1))
+    log(f"正在收集各集视频地址（共{actual_count}集，限速保护{workers}线程，预计约{est}秒，请留意下方进度）...")
+
     eps = crawler.collect_episode_videos(
         tab, episode_start=actual_start, episode_end=actual_end,
         progress_callback=url_progress_callback)

@@ -7,6 +7,7 @@
 import importlib.util
 import os
 import sys
+from utils import app_base
 
 
 def _get_data_dir():
@@ -14,7 +15,7 @@ def _get_data_dir():
     if getattr(sys, 'frozen', False):
         base_dir = os.path.dirname(sys.executable)
     else:
-        base_dir = os.path.dirname(os.path.abspath(__file__))
+        base_dir = app_base()
     data_dir = os.path.join(base_dir, 'sites_data')
     if not os.path.exists(data_dir):
         os.makedirs(data_dir)

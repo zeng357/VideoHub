@@ -4,8 +4,10 @@
 import time
 import os
 import json
+import cookie_guard as _cg
 
 from config import DEFAULT_COOKIES_DIR
+from utils import app_base
 from site_discovery import get_site_crawler_class
 
 
@@ -22,6 +24,7 @@ class VideoCrawler:
 
         self.cookie_str = cookie_str
         self.cookies_dir = cookies_dir if cookies_dir else DEFAULT_COOKIES_DIR
+        self._container_unlock = None   # 加密容器解锁状态（need_password/wrong_password/destroyed）
 
         # 站点是否需要浏览器：纯 requests 实现的站点声明 NEEDS_BROWSER=False
         self.needs_browser = bool(getattr(self.site_crawler_class, 'NEEDS_BROWSER', True))
@@ -69,6 +72,11 @@ class VideoCrawler:
         co.set_argument("--disable-renderer-backgrounding")
         co.set_argument("--disable-background-timer-throttling")
         co.set_argument("--disable-features=CalculateNativeWinOcclusion")
+        # 快速加载：DOM 就绪即返回，不等图片/广告等慢资源（搜索结果/详情列表读取无需完整渲染）
+        try:
+            co.set_load_mode('eager')
+        except Exception:
+            pass
 
         if headless:
             co.headless()
@@ -103,12 +111,19 @@ class VideoCrawler:
 
         if self.cookie_str:
             self.set_cookie()
+        elif not self.cookie_str and self.has_saved_cookies():
+            # 登录窗口保存的浏览器 Cookie（json）自动加载
+            self.load_cookies()
 
     # ============ Cookie ============
     def get_cookie_str_path(self):
         if not os.path.exists(self.cookies_dir):
             os.makedirs(self.cookies_dir)
-        return os.path.join(self.cookies_dir, f"{self.site_name}_cookie_str.txt")
+        return os.path.join(self.cookies_dir, f"{self.site_name}_cookie_str.txt.enc")
+
+    def _guard_base(self):
+        """cookie_guard 的 cookies 根目录基准（程序根目录）"""
+        return app_base()
 
     def save_cookie_str(self, cookie_str):
         try:
@@ -118,9 +133,13 @@ class VideoCrawler:
                 if os.path.exists(path):
                     os.remove(path)
                 return True
+            container = _cg.encrypt_container(
+                cookie_str.encode('utf-8'),
+                password=_cg.current_password(),
+                base_dir=self._guard_base())
             with open(path, 'w', encoding='utf-8') as f:
-                f.write(cookie_str)
-            print(f"Cookie字符串已保存到: {path}")
+                f.write(container)
+            print(f"Cookie字符串已加密保存到: {path}")
             return True
         except Exception as e:
             print(f"保存Cookie字符串失败: {e}")
@@ -130,17 +149,26 @@ class VideoCrawler:
         try:
             path = self.get_cookie_str_path()
             if os.path.exists(path):
-                with open(path, 'r', encoding='utf-8') as f:
-                    s = f.read().strip()
-                if s:
-                    print(f"已从文件加载Cookie字符串: {path}")
-                    return s
+                raw, st = _cg.decrypt_file(path, base_dir=self._guard_base(), internal=True)
+                if st == 'ok' and raw:
+                    s = raw.decode('utf-8', 'ignore').strip()
+                    if s:
+                        print(f"已解密加载Cookie字符串: {path}")
+                        return s
+                self._container_unlock = st
+                print(f"Cookie容器解密未通过: {st}")
+            # 兼容旧版未加密文件
+            old = path.replace('.enc', '')
+            if os.path.exists(old):
+                with open(old, 'r', encoding='utf-8') as f:
+                    return f.read().strip()
         except Exception as e:
             print(f"加载Cookie字符串失败: {e}")
         return None
 
     def has_cookie_str(self):
-        return os.path.exists(self.get_cookie_str_path())
+        p = self.get_cookie_str_path()
+        return os.path.exists(p) or os.path.exists(p.replace('.enc', ''))
 
     def clear_cookie_str(self):
         try:
@@ -172,17 +200,20 @@ class VideoCrawler:
     def get_cookies_path(self):
         if not os.path.exists(self.cookies_dir):
             os.makedirs(self.cookies_dir)
-        return os.path.join(self.cookies_dir, f"{self.site_name}_cookies.json")
+        return os.path.join(self.cookies_dir, f"{self.site_name}_cookies.json.enc")
 
     def save_cookies(self):
         if not self.needs_browser:
             return False
         try:
             cookies = self.tab.cookies()
+            raw = json.dumps(cookies, ensure_ascii=False).encode('utf-8')
+            container = _cg.encrypt_container(
+                raw, password=_cg.current_password(), base_dir=self._guard_base())
             cookies_path = self.get_cookies_path()
             with open(cookies_path, 'w', encoding='utf-8') as f:
-                json.dump(cookies, f, ensure_ascii=False, indent=2)
-            print(f"Cookie已保存到: {cookies_path}")
+                f.write(container)
+            print(f"Cookie已加密保存到: {cookies_path}")
             return True
         except Exception as e:
             print(f"保存Cookie失败: {e}")
@@ -193,13 +224,23 @@ class VideoCrawler:
             return False
         try:
             cookies_path = self.get_cookies_path()
-            if not os.path.exists(cookies_path):
+            raw = None
+            if os.path.exists(cookies_path):
+                raw, st = _cg.decrypt_file(cookies_path, base_dir=self._guard_base(), internal=True)
+                if st != 'ok':
+                    self._container_unlock = st
+                    print(f"Cookie容器解密未通过: {st}")
+            if raw is None:
+                old = cookies_path.replace('.enc', '')
+                if os.path.exists(old):
+                    with open(old, 'r', encoding='utf-8') as f:
+                        raw = f.read().encode('utf-8')
+            if raw is None:
                 print(f"Cookie文件不存在: {cookies_path}")
                 return False
-            with open(cookies_path, 'r', encoding='utf-8') as f:
-                cookies = json.load(f)
+            cookies = json.loads(raw.decode('utf-8', 'ignore'))
             self.tab.set.cookies(cookies)
-            print(f"已从文件加载Cookie: {cookies_path}")
+            print(f"已解密并加载Cookie: {cookies_path}")
             return True
         except Exception as e:
             print(f"加载Cookie失败: {e}")
@@ -208,7 +249,8 @@ class VideoCrawler:
     def has_saved_cookies(self):
         if not self.needs_browser:
             return False
-        return os.path.exists(self.get_cookies_path())
+        p = self.get_cookies_path()
+        return os.path.exists(p) or os.path.exists(p.replace('.enc', ''))
 
     def open_login_page(self):
         if not self.needs_browser:

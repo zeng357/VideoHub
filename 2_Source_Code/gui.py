@@ -6,10 +6,10 @@ import time
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 
-from utils import ensure_console_safe
+from utils import ensure_console_safe, app_base
 ensure_console_safe()
 
-from config import BROWSER_PATHS, DEFAULT_SITE, detect_ffmpeg_path
+from config import BROWSER_PATHS, DEFAULT_SITE, DEFAULT_COOKIES_DIR, detect_ffmpeg_path
 from site_discovery import get_all_site_names, refresh_sites
 from video_crawler import VideoCrawler
 from download_flow import (run_direct_link, run_auto_scan, run_site_download,
@@ -43,10 +43,13 @@ class VideoDownloaderGUI:
         self.running = False
         self._random_collecting = False
         self._random_stop = False
+        self._stop_ev = threading.Event()   # 收集过程停止标志（弹窗内停止爬取按钮/三选一停止）
+        self._stop_requested = False         # 已点停止：开始按钮保持锁定，直到重新加载/清空
+        self._range_win = None               # 选择爬取方式弹窗引用（爬取中常驻显示）
         self.ffmpeg_path = detect_ffmpeg_path()
 
         # 日志落盘：界面日志框被挤出屏幕时也能从 下载日志.txt 看到完整记录
-        self._log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '下载日志.txt')
+        self._log_path = os.path.join(app_base(), '下载日志.txt')
         try:
             with open(self._log_path, 'a', encoding='utf-8') as _f:
                 _f.write('\n===== 启动 %s =====\n' % time.strftime('%Y-%m-%d %H:%M:%S'))
@@ -115,6 +118,12 @@ class VideoDownloaderGUI:
                                       activeforeground=NAV_ACTIVE_TEXT,
                                       command=lambda: self._switch_page('main'))
         self.nav_main_btn.pack(fill=tk.X, padx=6, pady=2)
+        self.nav_password_btn = tk.Button(self.sidebar, text="🔒 密码管理", font=("微软雅黑", 11),
+                                          relief="flat", bd=0, anchor="w", padx=14,
+                                          bg=SIDEBAR_BG, fg=NAV_TEXT, activebackground=NAV_ACTIVE_BG,
+                                          activeforeground=NAV_ACTIVE_TEXT,
+                                          command=lambda: self._switch_page('password'))
+        self.nav_password_btn.pack(fill=tk.X, padx=6, pady=2)
         self.nav_settings_btn = tk.Button(self.sidebar, text="⚙ 设置", font=("微软雅黑", 11),
                                           relief="flat", bd=0, anchor="w", padx=14,
                                           bg=SIDEBAR_BG, fg=NAV_TEXT, activebackground=NAV_ACTIVE_BG,
@@ -142,6 +151,8 @@ class VideoDownloaderGUI:
                    command=self.refresh_site_list).pack(side=tk.LEFT, padx=2)
         ttk.Button(site_row, text="打开站点目录", width=11,
                    command=self.open_sites_dir).pack(side=tk.LEFT, padx=2)
+        ttk.Button(site_row, text="登录站点", width=9,
+                   command=self.open_login_window).pack(side=tk.LEFT, padx=2)
         self.site_count_label = ttk.Label(site_row, text="已加载 0 个站点",
                                           font=("微软雅黑", 9))
         self.site_count_label.pack(side=tk.RIGHT, padx=4)
@@ -188,7 +199,7 @@ class VideoDownloaderGUI:
         path_row = ttk.Frame(path_frame)
         path_row.pack(fill=tk.X, pady=2)
         ttk.Label(path_row, text="下载路径:", width=9).pack(side=tk.LEFT)
-        self.path_var = tk.StringVar(value=os.path.dirname(os.path.abspath(__file__)))
+        self.path_var = tk.StringVar(value=app_base())
         ttk.Entry(path_row, textvariable=self.path_var, font=("微软雅黑", 10)).pack(
             side=tk.LEFT, fill=tk.X, expand=True)
         ttk.Button(path_row, text="浏览", width=6,
@@ -332,22 +343,67 @@ class VideoDownloaderGUI:
         ttk.Label(br_card, text=f"ffmpeg: {ffmpeg_txt}", font=("微软雅黑", 9)).pack(
             anchor='w', padx=4, pady=(4, 2))
 
+        # ---------- 密码管理页面（侧边栏「密码管理」，独立一页） ----------
+        self.page_password = ttk.Frame(self.main_frame)
+        self.page_password.pack_forget()
+        pw_lf1 = ttk.LabelFrame(self.page_password, text="登录状态（登录过的站点下次自动登录）",
+                                style="Card.TLabelframe")
+        pw_lf1.pack(fill=tk.X, pady=(4, 6))
+        self.pw_status_text = tk.StringVar(value="检测中...")
+        ttk.Label(pw_lf1, textvariable=self.pw_status_text, font=("微软雅黑", 9),
+                  foreground="#334155").pack(anchor='w', padx=12, pady=8)
+        pw_lf2 = ttk.LabelFrame(self.page_password, text="容器密码（仅登录数据加密，程序本身不锁）",
+                                style="Card.TLabelframe")
+        pw_lf2.pack(fill=tk.X, pady=6)
+        if not hasattr(self, 'pw_state_text'):
+            self.pw_state_text = tk.StringVar(value="检测中...")
+        ttk.Label(pw_lf2, textvariable=self.pw_state_text, font=("微软雅黑", 9),
+                  foreground="#334155").pack(anchor='w', padx=12, pady=8)
+        pw_btns = ttk.Frame(self.page_password)
+        pw_btns.pack(fill=tk.X, padx=6, pady=10)
+        ttk.Button(pw_btns, text="设置密码", width=14,
+                   command=self._set_container_password).pack(side=tk.LEFT, padx=6)
+        ttk.Button(pw_btns, text="修改密码", width=14,
+                   command=self._change_container_password).pack(side=tk.LEFT, padx=6)
+        ttk.Button(pw_btns, text="清除密码", width=12,
+                   command=self._clear_container_password).pack(side=tk.LEFT, padx=6)
+        ttk.Button(pw_btns, text="重置容器", width=10,
+                   command=self._reset_container_data).pack(side=tk.LEFT, padx=6)
+        tk.Label(self.page_password,
+                 text="说明：\n· 程序自身浏览器加载登录数据：无需密码（本机自动识别）；\n"
+                      "· 其他方式访问密码库、或程序被复制到其他电脑：需密码验证，错误 4 次自动销毁；\n"
+                      "· 修改/清除密码需先回答创建时设置的安全问题；\n"
+                      "· 程序复制给他人时，对方点「重置容器」即可清除原密码，设置自己的密码。",
+                 font=("微软雅黑", 8), foreground="#94a3b8", justify=tk.LEFT).pack(anchor='w', padx=12)
+        self._refresh_password_page()
+
         self._switch_page('main')
         self._on_mode_change()
 
     def _switch_page(self, page):
         if page == 'main':
             self.page_settings.pack_forget()
+            if hasattr(self, 'page_password'):
+                self.page_password.pack_forget()
             self.page_main.pack(fill=tk.BOTH, expand=True)
             self._update_nav_highlight('main')
+        elif page == 'password':
+            self.page_main.pack_forget()
+            self.page_settings.pack_forget()
+            self.page_password.pack(fill=tk.BOTH, expand=True)
+            self._update_nav_highlight('password')
+            self._refresh_password_page()
         else:
             self.page_main.pack_forget()
+            if hasattr(self, 'page_password'):
+                self.page_password.pack_forget()
             self.page_settings.pack(fill=tk.BOTH, expand=True)
             self._update_nav_highlight('settings')
 
     def _update_nav_highlight(self, page):
         for btn, name, active in ((self.nav_main_btn, 'main', page == 'main'),
-                                  (self.nav_settings_btn, 'settings', page == 'settings')):
+                                  (self.nav_settings_btn, 'settings', page == 'settings'),
+                                  (self.nav_password_btn, 'password', page == 'password')):
             if active:
                 btn.configure(bg=NAV_ACTIVE_BG, fg=NAV_ACTIVE_TEXT)
             else:
@@ -364,6 +420,7 @@ class VideoDownloaderGUI:
             self._random_stop = True
         self._refresh_hints()
         self._refresh_random_btn()
+        self.refresh_login_status()
 
     def _refresh_random_btn(self):
         """随机抓取按钮：仅抖音精选启用（独立按键，与搜索方式无关）"""
@@ -427,12 +484,628 @@ class VideoDownloaderGUI:
                     self.site_var.set(names[0])
         self.site_count_label.configure(text=f"已加载 {len(names)} 个站点")
         self.append_status(f"检测到 {len(names)} 个可用站点/模式")
+        self.refresh_login_status()
 
     def open_sites_dir(self):
-        data_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'sites_data')
+        data_dir = os.path.join(app_base(), 'sites_data')
         os.makedirs(data_dir, exist_ok=True)
         os.startfile(data_dir)
 
+    # ==================== 站点登录小窗口 ====================
+    def refresh_login_status(self):
+        """刷新登录状态容器：列出各站点是否已保存登录（已保存=下次自动登录）"""
+        try:
+            base = os.path.join(app_base(), DEFAULT_COOKIES_DIR)
+            logged = set()
+            if os.path.isdir(base):
+                for fn in os.listdir(base):
+                    if fn.endswith('_cookie_str.txt'):
+                        logged.add(fn.replace('_cookie_str.txt', ''))
+                    elif fn.endswith('_cookies.json'):
+                        logged.add(fn.replace('_cookies.json', ''))
+            names = []
+            try:
+                names = get_all_site_names()
+            except Exception:
+                names = []
+            parts = []
+            for s in names:
+                if s and s != '自动扫描':
+                    parts.append(f"✓ {s}" if s in logged else f"· {s}")
+            if parts:
+                self.login_status_var.set(
+                    "　".join(parts) + "　（✓=已登录，下次自动登录，无需重复操作）")
+            else:
+                self.login_status_var.set("暂无站点（可在「登录站点」完成一次登录后自动记住）")
+            if hasattr(self, 'login_status_lbl'):
+                self.login_status_lbl.configure(
+                    foreground="#16a34a" if logged else "#64748b")
+            # 容器密码状态：扫描任一 .enc 容器是否含密码层
+            try:
+                import cookie_guard as cg
+                root = os.path.join(app_base(),
+                                    DEFAULT_COOKIES_DIR)
+                has_pw = False
+                if os.path.isdir(root):
+                    for fn in os.listdir(root):
+                        if fn.endswith('.enc'):
+                            try:
+                                import json as _json
+                                with open(os.path.join(root, fn),
+                                          'r', encoding='utf-8') as _f:
+                                    cj = _json.loads(_f.read())
+                                if cj.get('has_pw'):
+                                    has_pw = True
+                                    break
+                            except Exception:
+                                pass
+                if hasattr(self, 'container_pw_state'):
+                    self.container_pw_state.set(
+                        "已设置（外部电脑打开需密码）" if has_pw
+                        else "未设置（仅本电脑可打开）")
+            except Exception:
+                pass
+        except Exception:
+            try:
+                self.login_status_var.set("登录状态读取失败")
+            except Exception:
+                pass
+
+    def _ask_password_dialog(self, title, prompt, confirm=False):
+        """通用密码输入弹窗；confirm=True 时需两次输入一致。返回密码或 None（取消）"""
+        import cookie_guard as cg
+        result = {'pw': None}
+        win = tk.Toplevel(self.root)
+        win.title(title)
+        win.geometry("380x240" if confirm else "380x200")
+        win.resizable(False, False)
+        win.transient(self.root)
+        win.grab_set()
+        tk.Label(win, text=prompt, font=("微软雅黑", 9), wraplength=340,
+                 justify=tk.LEFT).pack(padx=14, pady=(12, 6))
+        e1 = ttk.Entry(win, show="*", font=("微软雅黑", 11))
+        e1.pack(fill=tk.X, padx=14, pady=4)
+        e2 = None
+        if confirm:
+            tk.Label(win, text="再次输入确认", font=("微软雅黑", 9)).pack(anchor='w', padx=14)
+            e2 = ttk.Entry(win, show="*", font=("微软雅黑", 11))
+            e2.pack(fill=tk.X, padx=14, pady=4)
+        err = tk.StringVar()
+        tk.Label(win, textvariable=err, fg="#dc2626",
+                 font=("微软雅黑", 8)).pack(anchor='w', padx=14)
+        def _ok():
+            pw1 = e1.get()
+            if not pw1:
+                err.set("密码不能为空")
+                return
+            if confirm:
+                if pw1 != e2.get():
+                    err.set("两次输入不一致，请重新输入")
+                    return
+                # 强密码校验：必须同时包含 数字 + 符号 + 字母
+                has_digit = any(c.isdigit() for c in pw1)
+                has_alpha = any(c.isalpha() for c in pw1)
+                has_symbol = any(not c.isalnum() for c in pw1)
+                if not (has_digit and has_alpha and has_symbol):
+                    err.set("密码必须同时包含 数字+符号+字母（如 Abc@123）")
+                    return
+                if len(pw1) < 6:
+                    err.set("密码长度至少 6 位")
+                    return
+            result['pw'] = pw1
+            win.destroy()
+        def _cancel():
+            win.destroy()
+        btns = ttk.Frame(win)
+        btns.pack(pady=(4, 10))
+        ttk.Button(btns, text="确定", width=10, command=_ok).pack(side=tk.LEFT, padx=8)
+        ttk.Button(btns, text="取消", width=8, command=_cancel).pack(side=tk.LEFT, padx=8)
+        e1.bind("<Return>", lambda ev: _ok())
+        win.protocol("WM_DELETE_WINDOW", _cancel)
+        win.after(100, e1.focus_set)
+        self.wait_window(win)
+        return result['pw']
+
+    def _refresh_password_page(self):
+        """刷新密码管理页：登录状态 + 容器密码状态"""
+        try:
+            import cookie_guard as cg
+            base = app_base()
+            logged = set()
+            root = os.path.join(base, DEFAULT_COOKIES_DIR)
+            if os.path.isdir(root):
+                for fn in os.listdir(root):
+                    for suf in ('_cookie_str.txt.enc', '_cookies.json.enc'):
+                        if fn.endswith(suf):
+                            logged.add(fn.replace(suf, ''))
+                            break
+            names = []
+            try:
+                names = get_all_site_names()
+            except Exception:
+                names = []
+            parts = [f"✓ {s}" if s in logged else f"· {s}"
+                     for s in names if s and s != '自动扫描']
+            if hasattr(self, 'pw_status_text'):
+                self.pw_status_text.set("　".join(parts) if parts else "暂无站点")
+            has_pw = False
+            if os.path.isdir(root):
+                for fn in os.listdir(root):
+                    if fn.endswith('.enc'):
+                        try:
+                            import json as _json
+                            with open(os.path.join(root, fn), 'r', encoding='utf-8') as _f:
+                                cj = _json.loads(_f.read())
+                            if cj.get('has_pw'):
+                                has_pw = True
+                                break
+                        except Exception:
+                            pass
+            n_q = len(cg.load_security_questions(base))
+            pw_state = "已设置（外部电脑打开需密码）" if has_pw else "未设置（仅本电脑可打开）"
+            if hasattr(self, 'pw_state_text'):
+                self.pw_state_text.set(f"密码状态：{pw_state}　·　安全问题：{n_q} 个")
+        except Exception:
+            pass
+
+    def _set_container_password(self):
+        """设置容器密码：密码(≥6位，数字+符号+字母) + 自定义安全问题（问题/答案不限长度）"""
+        import cookie_guard as cg
+        base = app_base()
+        # 已设置过 → 自动进入修改密码流程（需回答安全问题）
+        if cg.has_security_questions(base):
+            try:
+                messagebox.showinfo("提示", "已设置过密码，正在进入「修改密码」（需先回答安全问题）")
+            except Exception:
+                pass
+            self._change_container_password()
+            return
+        result = {'pw': None, 'qs': []}
+        win = tk.Toplevel(self.root)
+        win.title("设置容器密码")
+        win.geometry("460x420")
+        win.resizable(False, False)
+        win.transient(self.root)
+        win.grab_set()
+        win.lift()
+        win.attributes('-topmost', True)
+        tk.Label(win, text="密码（至少6位，必须同时包含 数字+符号+字母）：",
+                 font=("微软雅黑", 9)).pack(anchor='w', padx=14, pady=(12, 2))
+        e1 = ttk.Entry(win, show="*", font=("微软雅黑", 11))
+        e1.pack(fill=tk.X, padx=14, pady=3)
+        tk.Label(win, text="再次输入确认：", font=("微软雅黑", 9)).pack(anchor='w', padx=14)
+        e2 = ttk.Entry(win, show="*", font=("微软雅黑", 11))
+        e2.pack(fill=tk.X, padx=14, pady=3)
+
+        tk.Label(win, text="安全问题（1~3个，可自定义，问题/答案不限长度）：",
+                 font=("微软雅黑", 9)).pack(anchor='w', padx=14, pady=(10, 2))
+        q_entries = []
+        for i in range(3):
+            row = ttk.Frame(win)
+            row.pack(fill=tk.X, padx=14, pady=2)
+            qe = ttk.Entry(row, font=("微软雅黑", 9))
+            qe.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 4))
+            ae = ttk.Entry(row, font=("微软雅黑", 9))
+            ae.pack(side=tk.LEFT, width=14)
+            if i == 0:
+                qe.insert(0, "问题1（如：我的爱好是？）")
+            q_entries.append((qe, ae))
+        err = tk.StringVar()
+        tk.Label(win, textvariable=err, fg="#dc2626",
+                 font=("微软雅黑", 8)).pack(anchor='w', padx=14)
+
+        def _ok():
+            pw1 = e1.get()
+            if not pw1:
+                err.set("密码不能为空")
+                return
+            if len(pw1) < 6:
+                err.set("密码长度至少 6 位")
+                return
+            has_d = any(c.isdigit() for c in pw1)
+            has_a = any(c.isalpha() for c in pw1)
+            has_s = any(not c.isalnum() for c in pw1)
+            if not (has_d and has_a and has_s):
+                err.set("密码必须同时包含 数字+符号+字母（如 Abc@123）")
+                return
+            if pw1 != e2.get():
+                err.set("两次输入不一致")
+                return
+            qs = []
+            for qe, ae in q_entries:
+                q = qe.get().strip()
+                a = ae.get().strip()
+                if q or a:
+                    if not q or not a:
+                        err.set("安全问题与答案需成对填写（或都留空）")
+                        return
+                    qs.append((q, a))
+            if not qs:
+                err.set("请至少设置 1 个安全问题（改密码时需回答）")
+                return
+            result['pw'] = pw1
+            result['qs'] = qs
+            win.destroy()
+
+        def _cancel():
+            win.destroy()
+        btns = ttk.Frame(win)
+        btns.pack(pady=8)
+        ttk.Button(btns, text="保存", width=10, command=_ok).pack(side=tk.LEFT, padx=8)
+        ttk.Button(btns, text="取消", width=8, command=_cancel).pack(side=tk.LEFT, padx=8)
+        win.protocol("WM_DELETE_WINDOW", _cancel)
+        self.wait_window(win)
+        if not result['pw']:
+            return
+        pw, qs = result['pw'], result['qs']
+        try:
+            cg.set_password_cache(pw)
+            cg.save_security_questions(qs, base_dir=base)
+            ok, fail = cg.set_container_password(base, pw)
+            try:
+                messagebox.showinfo(
+                    "设置成功",
+                    f"容器密码与安全问题已保存（更新 {ok} 个容器）。\n"
+                    "本机照常自动登录；外部电脑打开时需输入密码。\n"
+                    "修改/清除密码需回答安全问题，请牢记问题和答案。")
+            except Exception:
+                pass
+        except Exception as e:
+            try:
+                messagebox.showwarning("设置失败", f"保存容器密码失败: {e}")
+            except Exception:
+                pass
+        try:
+            self._refresh_password_page()
+        except Exception:
+            pass
+
+    def _ask_security_questions(self, base, title):
+        """弹窗逐题回答安全问题；全部答对返回 True，否则 False"""
+        import cookie_guard as cg
+        qs = cg.load_security_questions(base)
+        if not qs:
+            return False
+        result = {'ok': False}
+        win = tk.Toplevel(self.root)
+        win.title(title)
+        win.geometry("420x260")
+        win.resizable(False, False)
+        win.transient(self.root)
+        tk.Label(win, text="请回答创建密码时设置的安全问题：",
+                 font=("微软雅黑", 9)).pack(anchor='w', padx=14, pady=(12, 4))
+        entries = {}
+        for q in qs:
+            tk.Label(win, text=f"Q: {q}", font=("微软雅黑", 9)).pack(
+                anchor='w', padx=14, pady=(4, 0))
+            e = ttk.Entry(win, font=("微软雅黑", 10))
+            e.pack(fill=tk.X, padx=14, pady=2)
+            entries[q] = e
+        err = tk.StringVar()
+        tk.Label(win, textvariable=err, fg="#dc2626",
+                 font=("微软雅黑", 8)).pack(anchor='w', padx=14)
+
+        def _ok():
+            answers = {}
+            for q, e in entries.items():
+                answers[q] = e.get()
+            if cg.verify_security_answers(answers, base_dir=base):
+                result['ok'] = True
+                win.destroy()
+            else:
+                err.set("答案不正确，请重试")
+
+        def _cancel():
+            win.destroy()
+        btns = ttk.Frame(win)
+        btns.pack(pady=8)
+        ttk.Button(btns, text="验证", width=10, command=_ok).pack(side=tk.LEFT, padx=8)
+        ttk.Button(btns, text="取消", width=8, command=_cancel).pack(side=tk.LEFT, padx=8)
+        win.protocol("WM_DELETE_WINDOW", _cancel)
+        self.wait_window(win)
+        return result['ok']
+
+    def _change_container_password(self):
+        """修改容器密码：先回答安全问题，答对后才能修改"""
+        import cookie_guard as cg
+        base = app_base()
+        if not cg.has_security_questions(base):
+            try:
+                messagebox.showinfo("提示", "尚未设置密码/安全问题，请先「设置密码」")
+            except Exception:
+                pass
+            return
+        if not self._ask_security_questions(base, "安全验证"):
+            return
+        pw = self._ask_password_dialog(
+            "修改容器密码",
+            "安全验证通过。请输入新密码（至少6位，必须包含 数字+符号+字母）：\n"
+            "修改后：外部电脑打开需新密码；错误 4 次仍会销毁数据。",
+            confirm=True)
+        if pw is None:
+            return
+        try:
+            cg.set_password_cache(pw)
+            ok, fail = cg.set_container_password(base, pw)
+            try:
+                messagebox.showinfo("修改成功",
+                                    f"容器密码已更新（更新 {ok} 个容器"
+                                    + (f"，{fail} 个失败" if fail else "") + "）。")
+            except Exception:
+                pass
+        except Exception as e:
+            try:
+                messagebox.showwarning("修改失败", f"修改容器密码失败: {e}")
+            except Exception:
+                pass
+        try:
+            self._refresh_password_page()
+        except Exception:
+            pass
+
+    def _clear_container_password(self):
+        """清除容器密码：需先回答安全问题；清除后仅本机可打开"""
+        import cookie_guard as cg
+        base = app_base()
+        if not cg.has_security_questions(base):
+            try:
+                messagebox.showinfo("提示", "尚未设置密码，无需清除")
+            except Exception:
+                pass
+            return
+        if not self._ask_security_questions(base, "安全验证"):
+            return
+        try:
+            if messagebox.askyesno("清除容器密码",
+                                   "安全验证通过。确定清除容器密码？\n"
+                                   "清除后仅本电脑可打开容器，外部电脑将无法打开。"):
+                cg.set_password_cache(None)
+                ok, fail = cg.set_container_password(base, None)
+                messagebox.showinfo("已清除", f"已清除容器密码（更新 {ok} 个容器）")
+                try:
+                    self._refresh_password_page()
+                except Exception:
+                    pass
+        except Exception as e:
+            try:
+                messagebox.showwarning("操作失败", f"清除密码失败: {e}")
+            except Exception:
+                pass
+
+    def _reset_container_data(self):
+        """重置容器：清除全部密码与登录数据（复制给他人时对方重新设置）"""
+        import cookie_guard as cg
+        base = app_base()
+        try:
+            if not messagebox.askyesno(
+                    "重置容器",
+                    "将清除容器内全部密码与登录数据（包括所有站点的登录状态）。\n"
+                    "重置后可以重新设置你自己的密码。\n\n确定重置吗？"):
+                return
+            if cg.reset_all(base):
+                cg.clear_password_cache()
+                try:
+                    self._refresh_password_page()
+                except Exception:
+                    pass
+                messagebox.showinfo(
+                    "已重置",
+                    "容器已重置，回到全新状态。\n"
+                    "请点「设置密码」设置你自己的密码，再重新登录需要的站点。")
+        except Exception as e:
+            try:
+                messagebox.showwarning("重置失败", f"重置容器失败: {e}")
+            except Exception:
+                pass
+
+    def _handle_container_unlock(self, st, crawler):
+        """处理加密容器解锁：外部机器需密码；密码错 4 次销毁"""
+        import cookie_guard as cg
+        base = app_base()
+        if st == 'destroyed':
+            self.refresh_login_status()
+            try:
+                messagebox.showwarning(
+                    "容器已销毁",
+                    "容器密码错误累计超过 4 次，容器内全部登录数据已自动销毁。\n"
+                    "请在「登录站点」中重新登录需要的站点。")
+            except Exception:
+                pass
+            return
+        if st in ('need_password', 'wrong_password', 'need_verify'):
+            # 程序被改动且未设密码容器：需本人确认（无密码可验证）
+            if st == 'need_verify' and not cg.container_has_password(base):
+                try:
+                    mine = messagebox.askyesno(
+                        "程序完整性检测",
+                        "检测到程序文件被改动。\n\n"
+                        "· 如果这是你本人更新/修改的程序，请点「是」，确认后继续；\n"
+                        "· 否则请点「否」，拒绝访问密码库。")
+                    if mine:
+                        cg.confirm_program_change(base)
+                        s = crawler.load_cookie_str()
+                        if s:
+                            crawler.cookie_str = s
+                            try:
+                                crawler.set_cookie()
+                            except Exception as e:
+                                print(f"确认后注入Cookie失败: {e}")
+                            self.msg_queue.put((self.refresh_login_status, ()))
+                            self.msg_queue.put((self._refresh_password_page, ()))
+                            self.msg_queue.put((self.append_status, "✓ 已确认程序改动，恢复访问"))
+                            return
+                    try:
+                        messagebox.showwarning(
+                            "拒绝访问",
+                            "程序被改动且未获本人确认，已拒绝访问密码库。\n"
+                            "如是你本人操作，请重新打开程序后再试。")
+                    except Exception:
+                        pass
+                except Exception:
+                    pass
+                return
+            # 密码验证（need_password / need_verify / wrong_password）
+            if st == 'need_verify':
+                tip = "检测到程序文件被改动，需要重新输入容器密码验证。\n"
+            else:
+                tip = "访问保存的登录密码需要验证，请输入容器密码。\n"
+            n = cg.read_attempts(base)
+            left = max(0, cg.MAX_ATTEMPTS - n)
+            pw = self._ask_password_dialog(
+                "验证密码库访问",
+                tip
+                + "· 浏览器和正常下载不需要密码；\n"
+                + f"· 密码错误 {cg.MAX_ATTEMPTS} 次将自动销毁容器内全部数据。"
+                + (f"\n（当前已错 {n} 次，剩余 {left} 次）" if n > 0 else ""))
+            if pw is None:
+                try:
+                    messagebox.showinfo(
+                        "未解锁",
+                        "未解锁密码库。\n"
+                        "若是别人复制给你的程序，可在「密码管理」页点「重置容器」，"
+                        "清除原数据后重新设置你自己的密码。")
+                except Exception:
+                    pass
+                return
+            cg.set_password_cache(pw)
+            s = crawler.load_cookie_str()
+            if s:
+                crawler.cookie_str = s
+                try:
+                    crawler.set_cookie()
+                except Exception as e:
+                    print(f"解锁后注入Cookie失败: {e}")
+                self.msg_queue.put((self.refresh_login_status, ()))
+                self.msg_queue.put((self._refresh_password_page, ()))
+                self.msg_queue.put((self.append_status, "✓ 容器解锁成功，已恢复自动登录"))
+            else:
+                st2 = getattr(crawler, '_container_unlock', None)
+                if st2 == 'destroyed':
+                    self.refresh_login_status()
+                    try:
+                        messagebox.showwarning(
+                            "容器已销毁",
+                            "密码错误累计超过 4 次，容器内全部登录数据已自动销毁。")
+                    except Exception:
+                        pass
+                elif st2 == 'wrong_password':
+                    n2 = cg.read_attempts(base)
+                    left2 = max(0, cg.MAX_ATTEMPTS - n2)
+                    try:
+                        messagebox.showwarning(
+                            "密码错误",
+                            f"密码不正确（剩余 {left2} 次机会，超过将自动销毁全部数据）。")
+                    except Exception:
+                        pass
+                    self.msg_queue.put((self._handle_container_unlock, ('wrong_password', crawler)))
+                elif st2 == 'no_password_configured':
+                    try:
+                        messagebox.showinfo(
+                            "无法解锁",
+                            "该容器未设置密码，仅原电脑可打开。\n"
+                            "如需在外部电脑使用，请先在原电脑上「设置/修改密码」。")
+                    except Exception:
+                        pass
+        elif st == 'no_password_configured':
+            try:
+                messagebox.showinfo(
+                    "无法打开",
+                    "该容器未设置密码，仅本电脑可打开。\n"
+                    "如需外部电脑打开，请先在原电脑上设置容器密码。")
+            except Exception:
+                pass
+
+    def open_login_window(self):
+        """弹出站点登录小窗口：打开登录页 → 用户在浏览器完成登录 → 点“登录完成”保存"""
+        site = self._real_site()
+        if not site:
+            messagebox.showwarning("提示", "请先在顶部选择要登录的站点")
+            return
+
+        # 已登录状态初判（文本cookie 或 登录窗口保存的 json cookie 任一存在）
+        base = os.path.join(app_base(), DEFAULT_COOKIES_DIR)
+        txt_path = os.path.join(base, f"{site}_cookie_str.txt")
+        js_path = os.path.join(base, f"{site}_cookies.json")
+        logged = os.path.exists(txt_path) or os.path.exists(js_path)
+
+        win = tk.Toplevel(self.root)
+        win.title(f"登录 - {site}")
+        win.geometry("520x360")
+        win.resizable(False, False)
+        try:
+            win.attributes('-topmost', True)
+        except Exception:
+            pass
+
+        state_var = tk.StringVar(
+            value="已登录（将使用线路1）" if logged else "未登录（将从线路2开始寻找可用线路）")
+
+        tk.Label(win, text=f"站点：{site}", font=("微软雅黑", 12, "bold")).pack(anchor='w', padx=16, pady=(14, 4))
+        tk.Label(win, textvariable=state_var, fg=("#16a34a" if logged else "#b45309"),
+                 font=("微软雅黑", 10, "bold")).pack(anchor='w', padx=16, pady=(0, 6))
+
+        tips = tk.Label(win, justify='left', font=("微软雅黑", 9), anchor='w',
+                        text="操作步骤：\n"
+                             "1. 点击【打开登录页】，程序会弹出浏览器并打开该站点首页\n"
+                             "2. 在浏览器中完成登录（扫码 / 账号密码），确认已进入个人中心\n"
+                             "3. 回到本窗口点击【登录完成】，登录状态即保存到本地\n\n"
+                             "线路规则：\n"
+                             "· 已登录：从线路1开始向后寻找可用线路（VIP线路）\n"
+                             "· 未登录：线路1为VIP专用，从线路2开始向后寻找可用线路")
+        tips.pack(anchor='w', padx=16, pady=(0, 10))
+
+        btns = ttk.Frame(win)
+        btns.pack(fill=tk.X, padx=16, pady=8)
+        self._login_crawler = None
+
+        def _set_state(txt, color="#0f172a"):
+            state_var.set(txt)
+            for lbl in win.winfo_children():
+                if isinstance(lbl, tk.Label) and lbl['textvariable'] == state_var:
+                    lbl.configure(fg=color)
+
+        def _open_login_page():
+            def work():
+                try:
+                    c = VideoCrawler(site, BROWSER_PATHS.get(self.browser_var.get(), BROWSER_PATHS['edge']),
+                                     False, None)  # 登录必须显示浏览器窗口
+                    self._login_crawler = c
+                    c.open_login_page()
+                    self.msg_queue.put((_set_state, ("浏览器已打开，请完成登录后点击【登录完成】", "#2563eb")))
+                except Exception as e:
+                    self.msg_queue.put((_set_state, (f"打开登录页失败: {e}", "#dc2626")))
+            threading.Thread(target=work, daemon=True).start()
+            _set_state("正在打开浏览器...", "#2563eb")
+
+        def _login_done():
+            c = self._login_crawler
+            if c is None:
+                _set_state("请先点击【打开登录页】", "#dc2626")
+                return
+            def work():
+                try:
+                    c.complete_login()
+                    self.msg_queue.put((_set_state, ("登录成功，Cookie 已保存（将使用线路1）", "#16a34a")))
+                    self.msg_queue.put((self.append_status, f"[登录] {site} 登录成功，Cookie 已保存"))
+                    self.msg_queue.put((self.refresh_login_status, ()))
+                except Exception as e:
+                    self.msg_queue.put((_set_state, (f"保存登录状态失败: {e}", "#dc2626")))
+            threading.Thread(target=work, daemon=True).start()
+
+        def _on_close():
+            c = self._login_crawler
+            if c is not None and getattr(c, 'page', None) is not None:
+                try:
+                    c.page.close()
+                except Exception:
+                    pass
+            win.destroy()
+            self.refresh_login_status()
+
+        ttk.Button(btns, text="打开登录页", width=12, command=_open_login_page).pack(side=tk.LEFT, padx=3)
+        ttk.Button(btns, text="登录完成", width=12, command=_login_done).pack(side=tk.LEFT, padx=3)
+        ttk.Button(btns, text="关闭", width=8, command=_on_close).pack(side=tk.RIGHT, padx=3)
+        win.protocol("WM_DELETE_WINDOW", _on_close)
     def browse_path(self):
         path = filedialog.askdirectory(initialdir=self.path_var.get() or None)
         if path:
@@ -456,6 +1129,9 @@ class VideoDownloaderGUI:
         self.status_text.configure(state='disabled')
 
     def clear_status(self):
+        self._stop_requested = False
+        self.start_btn.configure(state='normal')
+        self.load_table_btn.configure(state='normal')
         self.status_text.configure(state='normal')
         self.status_text.delete('1.0', tk.END)
         self.status_text.configure(state='disabled')
@@ -556,6 +1232,7 @@ class VideoDownloaderGUI:
     def load_episode_table(self):
         """只扫描/收集剧集地址到剧集表（不下载），供勾选后下载"""
         if self.running:
+            messagebox.showinfo("提示", "上一个任务仍在进行中（按钮已锁定）。\n\n若确认没有任务在跑，请重启程序后再试。")
             return
         mode = self.mode_var.get()
         addr = self.addr_var.get().strip()
@@ -585,6 +1262,8 @@ class VideoDownloaderGUI:
         self.running = True
         self.load_table_btn.configure(state='disabled')
         self.start_btn.configure(state='disabled')
+        self._stop_ev.clear()
+        self._stop_requested = False
         self.table_info_var.set("正在扫描剧集列表，请稍候...")
         self.append_status(f"开始扫描: 方式{ {'1': '自动扫描', '2': '站内搜索', '3': '直接链接'}[mode] } "
                            + (f"站点={site} " if site else "") + f"输入={addr or kw}")
@@ -628,6 +1307,7 @@ class VideoDownloaderGUI:
                 crawler = VideoCrawler('抖音精选', opts['browser_path'],
                                        opts['headless'], opts['cookie'])
                 crawler.log_callback = lambda s: post(self.append_status, s)
+                crawler.choose_candidate = lambda cands: self._choose_candidate_threadsafe(cands)
                 self._collecting = True
                 self._collect_t0 = time.time()
                 try:
@@ -650,6 +1330,11 @@ class VideoDownloaderGUI:
                 crawler = VideoCrawler(crawler_site, opts['browser_path'],
                                        opts['headless'], opts['cookie'])
                 crawler.log_callback = lambda s: post(self.append_status, s)
+                crawler.choose_candidate = lambda cands: self._choose_candidate_threadsafe(cands)
+                crawler.stop_collect = lambda: self._stop_ev.is_set()
+                _ul = getattr(crawler, '_container_unlock', None)
+                if _ul:
+                    post(self._handle_container_unlock, _ul, crawler)
                 self._collecting = True
                 self._collect_t0 = time.time()
                 try:
@@ -659,7 +1344,8 @@ class VideoDownloaderGUI:
                         result = run_site_download(crawler, kw, episode_start=1,
                                                    episode_end=0, download_path=None,
                                                    log=log, url_progress_callback=url_bump,
-                                                   collect_only=True)
+                                                   collect_only=True,
+                                                   range_selector=self._range_selector_threadsafe)
                         series_name = kw
                     elif mode == '1' and not addr and site and not kw and hasattr(crawler, 'scan_homepage'):
                         # 站点支持主页扫描：列出主页全部视频名称，供勾选后逐个下载
@@ -682,7 +1368,8 @@ class VideoDownloaderGUI:
                         result = run_site_download(crawler, addr, episode_start=opts.get('start', 1),
                                                    episode_end=0, download_path=None,
                                                    log=log, url_progress_callback=url_bump,
-                                                   collect_only=True)
+                                                   collect_only=True,
+                                                   range_selector=self._range_selector_threadsafe)
                         series_name = addr
                     eps = result.get('eps') or []
                 finally:
@@ -731,9 +1418,214 @@ class VideoDownloaderGUI:
     def _table_load_done(self, err):
         self.running = False
         self.load_table_btn.configure(state='normal')
+        # 关闭可能还开着的「选择爬取方式」弹窗
+        if self._range_win is not None:
+            try:
+                self._range_win.destroy()
+            except Exception:
+                pass
+            self._range_win = None
+        # 无论是否停止，开始按钮都恢复：已收集的集数可直接勾选下载
         self.start_btn.configure(state='normal')
+        if self._stop_requested:
+            self._stop_requested = False
+            self.table_info_var.set("已停止爬取（保留已收集的集数）。可勾选后点「开始下载」下载已收集部分，或重新「加载剧集表」继续爬")
+            self.append_status("已停止：保留已收集的集数，可直接勾选后点「开始下载」")
         if err:
             self.table_info_var.set(err)
+
+    # ============ 超过50集：停止/选择范围/全部 三选一 ============
+    def stop_collect_click(self):
+        """停止爬取（由「选择爬取方式」弹窗内按钮调用）：设置停止标志，
+        收集线程保留已完成的集数；停止后开始按钮保持锁定，直到重新加载/清空"""
+        self._stop_ev.set()
+        self._stop_requested = True
+        self.append_status("已请求停止爬取：保留已完成的集数；开始下载按钮保持锁定，可重新「加载剧集表」或「清空状态」后再次使用")
+
+    def _range_selector_threadsafe(self, total):
+        """后台线程调用：投递主线程弹三选一（停止/选择范围/全部）；返回 (start,end) 或 None=停止"""
+        ev = threading.Event()
+        box = {}
+        def show():
+            try:
+                self._range_select_window(total, ev, box)
+            except Exception:
+                ev.set()
+        self.msg_queue.put((show, ()))
+        ev.wait(timeout=65)
+        c = box.get('choice')
+        if c == 'range':
+            return (box.get('start', 1), box.get('end', total))
+        if c == 'all':
+            return (1, total)
+        return None  # stop / 超时未操作
+
+    def _range_select_window(self, total, ev, box):
+        """主线程：共N集（>50）选择窗口。
+        先选择方式（全部/选择范围/停止），再点「开始爬取」执行；
+        开始后窗口不关闭，切换为「爬取中 + 停止爬取」状态，随时可点停止（保留已完成）"""
+        try:
+            win = tk.Toplevel(self.root)
+            self._range_win = win
+            win.title("选择爬取方式")
+            win.geometry("520x330")
+            win.attributes('-topmost', True)
+            win.transient(self.root)
+            try:
+                win.grab_set()
+            except Exception:
+                pass
+
+            title = tk.Label(win, text="共 %d 集（超过50集），请先选择爬取方式：" % total,
+                             font=('Microsoft YaHei UI', 11))
+            title.pack(pady=12)
+            hint = tk.Label(win, text="选择方式后，点下方「开始爬取」按钮执行；全部爬取耗时较长",
+                            font=('Microsoft YaHei UI', 9), foreground="gray")
+            hint.pack()
+
+            # ---- 方式选择区（grid 布局，便于整体隐藏） ----
+            cfg_row = tk.Frame(win)
+            cfg_row.pack(pady=10)
+            var = tk.StringVar(value='all')
+            tk.Radiobutton(cfg_row, text="全部爬取（%d集）" % total, variable=var, value='all',
+                           font=('Microsoft YaHei UI', 10)).grid(row=0, column=0, columnspan=5, sticky='w', padx=30, pady=3)
+            tk.Radiobutton(cfg_row, text="选择范围爬取", variable=var, value='range',
+                           font=('Microsoft YaHei UI', 10)).grid(row=1, column=0, sticky='w', padx=30)
+            tk.Label(cfg_row, text="起始:", font=('Microsoft YaHei UI', 10)).grid(row=1, column=1, padx=2)
+            sp_start = tk.Spinbox(cfg_row, from_=1, to=total, width=5,
+                                  font=('Microsoft YaHei UI', 10))
+            sp_start.delete(0, 'end'); sp_start.insert(0, '1')
+            sp_start.grid(row=1, column=2, padx=2)
+            tk.Label(cfg_row, text="结束:", font=('Microsoft YaHei UI', 10)).grid(row=1, column=3, padx=2)
+            sp_end = tk.Spinbox(cfg_row, from_=1, to=total, width=5,
+                                font=('Microsoft YaHei UI', 10))
+            sp_end.delete(0, 'end'); sp_end.insert(0, str(total))
+            sp_end.grid(row=1, column=4, padx=2)
+            tk.Radiobutton(cfg_row, text="停止（不爬取）", variable=var, value='stop',
+                           font=('Microsoft YaHei UI', 10)).grid(row=2, column=0, columnspan=5, sticky='w', padx=30, pady=3)
+
+            # ---- 爬取中状态（初始隐藏） ----
+            status_var = tk.StringVar(value="")
+            status_lbl = tk.Label(win, textvariable=status_var,
+                                  font=('Microsoft YaHei UI', 10), foreground="#1a66ff")
+            stop_btn = tk.Button(win, text="停止爬取（保留已完成）", width=22,
+                                 command=self.stop_collect_click, bg="#fdecea", fg="#c0392b")
+
+            timer = [None]
+            def switch_collecting(msg):
+                if timer[0] is not None:
+                    try:
+                        win.after_cancel(timer[0])
+                    except Exception:
+                        pass
+                    timer[0] = None
+                for w in (title, hint, cfg_row, btns):
+                    try:
+                        w.pack_forget()
+                    except Exception:
+                        pass
+                status_var.set(msg)
+                status_lbl.pack(pady=16)
+                stop_btn.pack(pady=8)
+
+            def do_stop():
+                box['choice'] = 'stop'; ev.set()
+                try:
+                    win.destroy()
+                except Exception:
+                    pass
+            def do_start():
+                v = var.get()
+                if v == 'stop':
+                    do_stop()
+                    return
+                if v == 'range':
+                    try:
+                        s = int(sp_start.get()); e = int(sp_end.get())
+                        if s < 1: s = 1
+                        if e > total: e = total
+                        if e < s: e = s
+                    except ValueError:
+                        s, e = 1, total
+                    box['choice'] = 'range'; box['start'] = s; box['end'] = e
+                    ev.set()
+                    switch_collecting("正在爬取第 %d-%d 集，请稍候（点下方「停止爬取」可提前结束，保留已完成）..." % (s, e))
+                else:
+                    box['choice'] = 'all'; ev.set()
+                    switch_collecting("正在爬取全部 %d 集，请稍候（点下方「停止爬取」可提前结束，保留已完成）..." % total)
+
+            btns = tk.Frame(win)
+            btns.pack(pady=14)
+            tk.Button(btns, text="开始爬取", width=14, command=do_start,
+                      bg="#e8f0fe", fg="#1a66ff", font=('Microsoft YaHei UI', 10, 'bold')).pack(side=tk.LEFT, padx=8)
+            tk.Button(btns, text="取消", width=10, command=do_stop).pack(side=tk.LEFT, padx=8)
+
+            win.protocol("WM_DELETE_WINDOW", do_stop)
+            timer[0] = win.after(60000, do_stop)  # 60秒未操作默认停止
+        except Exception:
+            box['choice'] = 'stop'
+            ev.set()
+
+
+    def _choose_candidate_threadsafe(self, candidates):
+        """后台线程调用：投递到主线程弹候选选择窗；返回用户选中URL；未选/超时返回None（取第一个）"""
+        ev = threading.Event()
+        box = {}
+        def show():
+            try:
+                self._candidate_window(candidates, ev, box)
+            except Exception:
+                ev.set()
+        self.msg_queue.put((show, ()))
+        ev.wait(timeout=60)
+        return box.get('url')
+
+    def _candidate_window(self, candidates, ev, box):
+        """主线程：选择窗口（抢焦点可见，但不阻塞日志/进度刷新），列出全部篇章/版本供挑选"""
+        try:
+            win = tk.Toplevel(self.root)
+            win.title("选择要下载的篇章")
+            win.geometry("600x460")
+            win.attributes('-topmost', True)
+            win.transient(self.root)
+            try:
+                win.grab_set()
+            except Exception:
+                pass
+            tk.Label(win, text="扫描到 %d 个篇章/版本，请选择要下载的一部（双击列表项或点确定）：" % len(candidates),
+                     font=('Microsoft YaHei UI', 10)).pack(pady=8)
+            frame = tk.Frame(win)
+            frame.pack(fill='both', expand=True, padx=10)
+            lb = tk.Listbox(frame, font=('Microsoft YaHei UI', 10), selectmode='single')
+            sb = tk.Scrollbar(frame, orient='vertical', command=lb.yview)
+            lb.configure(yscrollcommand=sb.set)
+            lb.pack(side='left', fill='both', expand=True)
+            sb.pack(side='right', fill='y')
+            for i, (name, url) in enumerate(candidates):
+                lb.insert(i, name or '（未命名）')
+            lb.selection_set(0)
+            lb.activate(0)
+
+            def on_ok():
+                sel = lb.curselection()
+                if sel:
+                    box['url'] = candidates[sel[0]][1]
+                ev.set()
+                win.destroy()
+
+            def on_cancel():
+                ev.set()
+                win.destroy()
+
+            btns = tk.Frame(win)
+            btns.pack(pady=8)
+            tk.Button(btns, text="确定下载这一部", width=16, command=on_ok).pack(side='left', padx=6)
+            tk.Button(btns, text="跳过（取第一部）", width=16, command=on_cancel).pack(side='left', padx=6)
+            lb.bind('<Double-Button-1>', lambda e: on_ok())
+            win.protocol("WM_DELETE_WINDOW", on_cancel)
+            win.after(45000, on_cancel)  # 45秒未操作自动跳过，后台任务不卡死
+        except Exception:
+            ev.set()
 
     def _any_checked(self):
         return any(v.get() for v in self._episode_vars.values())
@@ -753,6 +1645,7 @@ class VideoDownloaderGUI:
     # ==================== 下载任务 ====================
     def start_download(self):
         if self.running:
+            messagebox.showinfo("提示", "上一个任务仍在进行中（按钮已锁定）。\n\n若确认没有任务在跑，请重启程序后再试。")
             return
         mode = self.mode_var.get()
 
@@ -885,6 +1778,9 @@ class VideoDownloaderGUI:
                                    self.headless_var.get(),
                                    self.cookie_var.get().strip() or None)
             crawler.log_callback = lambda s: post(self.append_status, s)
+            _ul = getattr(crawler, '_container_unlock', None)
+            if _ul:
+                post(self._handle_container_unlock, _ul, crawler)
             for i, ep in enumerate(selected):
                 name = (ep.get('title') or '').strip()
                 post(self._set_dl_progress, 0, 1, '0 KB/s')
@@ -953,6 +1849,9 @@ class VideoDownloaderGUI:
                     # 已选站点 + 只填剧名 → 直接用站点站内搜索并下载（无需地址）
                     crawler = VideoCrawler(opts['site'], browser_path, headless, cookie_str)
                     crawler.log_callback = lambda s: post(self.append_status, s)
+                    _ul = getattr(crawler, '_container_unlock', None)
+                    if _ul:
+                        post(self._handle_container_unlock, _ul, crawler)
                     try:
                         result = run_site_download(
                             crawler, kw, episode_start=1, episode_end=0,
@@ -964,6 +1863,9 @@ class VideoDownloaderGUI:
                 elif mode == '1':
                     crawler = VideoCrawler('自动扫描', browser_path, headless, cookie_str)
                     crawler.log_callback = lambda s: post(self.append_status, s)
+                    _ul = getattr(crawler, '_container_unlock', None)
+                    if _ul:
+                        post(self._handle_container_unlock, _ul, crawler)
                     try:
                         result = run_auto_scan(
                             crawler, addr, keyword=kw, download_path=download_path, log=log,
@@ -982,6 +1884,9 @@ class VideoDownloaderGUI:
                         end = 0
                     crawler = VideoCrawler(opts.get('site') or '自动扫描', browser_path, headless, cookie_str)
                     crawler.log_callback = lambda s: post(self.append_status, s)
+                    _ul = getattr(crawler, '_container_unlock', None)
+                    if _ul:
+                        post(self._handle_container_unlock, _ul, crawler)
                     try:
                         result = run_site_download(
                             crawler, addr, episode_start=start, episode_end=end,
