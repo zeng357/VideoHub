@@ -1,15 +1,29 @@
-# VideoToolkit · Multi-Site Video Batch Downloader
+# VideoToolkit · Multi-Site Video Batch Downloader (通用视频下载器)
 
-🎬 See also: `1_Documentation/User_Guide.md` (UI areas + 5-step quick start + site usage + FAQ) | `How_It_Works.md` (principles) | `Disclaimer.md` (bilingual) | `FAQ.md`.
+🎬 See also: `1_Documentation/User_Guide.md` (UI areas + step-by-step guide + site usage + FAQ) | `How_It_Works.md` (principles) | `Disclaimer.md` (bilingual) | `FAQ.md`.
 
 A video downloader that runs on Windows and supports multiple video sites: built-in crawlers (A** Anime, B** Bullet-Screen Video, Y** Anime, D** Short Video, Auto-Scan) + a plugin-based site extension system — drop a new site plugin into `sites_data/` and it registers automatically. Features: in-site search to load episode tables, check individual / whole / all episodes, choose a speed tier (Turbo / Fast / Standard / Steady) and batch download with one click; B** videos are auto-muxed into a single mp4 (audio + video); D** short videos support human-controlled random grabbing.
 
 ---
 
+## ✨ What's New (v2.0)
+
+| Feature | Description |
+|---|---|
+| 🔐 **Encrypted login container** | Browser cookies are auto-saved into an encrypted container (machine-fingerprint bound + optional password). No plaintext cookie files on disk. |
+| 🛡 **Program integrity check** | The core program files are fingerprinted (SHA-256). If someone modifies the program, accessing the saved logins requires re-verifying the password. |
+| ✅ **Access verification** | The app's own browser loads logins seamlessly (no prompt). Any other access — copied program, other machine, manual unlock — requires the password; **4 wrong tries destroy the container data automatically**. |
+| 🔑 **Password management** | Set / change / clear container password behind security questions (only after answering them). Safe for copying the program to others: they reset the container and set their own password. |
+| 🎲 **Random grab (D**)** | Human-controlled random grabbing on the featured page: click "🎲 Random Grab" (turns into "Stop"); choose time and count. |
+| 🧩 **Episode selection** | When a search returns multiple seasons / works, a chooser window pops up; select one, then crawl. |
+| 🚀 **Speed tiers** | Turbo / Fast / Standard / Steady — pick the tier first, then click download. |
+| 🔄 **Auto source switch** | When the first playback source fails, the app automatically tries the next source. |
+| 📺 **B** auto mux** | DASH audio/video auto-merged into one mp4 via ffmpeg. |
+
+---
+
 ## 1. UI Guide
-
 After launching (double-click `start.bat`), the dark-themed main window contains:
-
 | Area | Description |
 |---|---|
 | Left site nav | Choose a video site (built-in sites + plugin sites) |
@@ -21,11 +35,10 @@ After launching (double-click `start.bat`), the dark-themed main window contains
 | Start download | Batch download checked episodes; dual progress bars + speed |
 | Log window | Live log of search → scan → download → mux → done; errors shown here |
 | Done notice | Popup when finished; videos saved to `Download/<site>/<title>/<ep>/` |
-
+| 🔒 Password panel | Side menu: set / change / clear the container password (security-question protected) |
 > **Keep the black console window open**: the program shows progress there. Close the console or the main window to exit.
 
 ## 2. Supported Sites
-
 | Site | Notes |
 |---|---|
 | A** Anime | Search `/search?wd=`, detail `/detail/{id}`; **auto-switch between multiple sources** if one fails |
@@ -36,9 +49,7 @@ After launching (double-click `start.bat`), the dark-themed main window contains
 | Plugin sites | Put a plugin in `sites_data/` and restart; auto-registered |
 
 ## 3. Adding a New Site (Plugin)
-
 **No code → use a template**: copy `3_Site_Extensions/sites_data/template_crawler.example.py`, fill in the search / episode / play-page rules, save, restart.
-
 **Python → three interfaces**:
 1. Copy template to `<site>_crawler.py`;
 2. Implement: `search_series(keyword)` → `[{url, title}]`; `get_episode_count(url)` → total; `collect_episode_videos(url, count)` → per-episode video URLs;
@@ -46,30 +57,31 @@ After launching (double-click `start.bat`), the dark-themed main window contains
 4. Place in `sites_data/`, restart.
 
 ## 4. Environment & Install
-
 Requires Python 3.10+ (verified on 3.10):
-
 | Dependency | Purpose |
 |---|---|
 | DrissionPage | Browser automation (scan / play-page parsing) |
 | aiohttp / aiofiles | Concurrent downloads |
 | pycryptodome | B** stream decryption (AES-128) |
 | requests / lxml | HTTP + parsing |
-
 ```bash
 pip install -r requirements.txt
 ```
-
 **ffmpeg** (required for B** audio/video mux): install from ffmpeg.org; make sure `C:\Program Files\ffmpe\bin\ffmpeg.exe` exists (or edit `config.py`).
 
-## 5. One-Click Start
+## 5. Security: Encrypted Login Container (v2.0)
+- **What is encrypted**: browser cookies / login states are saved into `.enc` containers under `cookies/`, encrypted with machine fingerprint (+ optional password). No plaintext cookie files.
+- **Seamless for the app's own browser**: the app's own browser loads logins automatically — no prompt on your machine.
+- **Anything else requires verification**: copied program / another machine / manual unlock → password required; **4 wrong tries destroy all saved login data automatically**.
+- **Program integrity check**: if the program files are modified (hash changed), the app asks for re-verification before loading saved logins. Confirm as the owner to rebuild the fingerprint baseline.
+- **Password management**: set / change / clear the container password in the 🔒 side panel; changing or clearing requires answering the security questions set when the password was created. Password must be ≥6 chars and contain digits + symbols + letters.
+- **Copying the program to others**: they just click "Reset container" and set their own password; your saved data is never exposed.
 
+## 6. One-Click Start
 Unzip and double-click `start.bat` (auto-checks Python, dependencies, and launches the GUI).
-
 If a module is missing: `pip install <module>` and restart.
 
-## 6. FAQ
-
+## 7. FAQ
 | Problem | Cause / Solution |
 |---|---|
 | Black window closes instantly | Python / deps missing; run `python gui.py` from a terminal to see the error |
@@ -79,19 +91,17 @@ If a module is missing: `pip install <module>` and restart.
 | B** video has no audio | DASH split; check ffmpeg installed and `config.py` path |
 | Search garbled / back to homepage | Site revamped; update the plugin |
 | First source fails | App auto-switches to the next source and keeps the working one |
-
+| "Need password" when loading episodes | A password-protected login container was detected; enter the container password (4 wrong tries destroy the data) |
+| "Program modified" prompt | The program files changed; if it is your own update, confirm and continue; otherwise deny |
+| Copying the program to a friend | On their machine click "Reset container" → set their own password → re-login needed sites |
 Full 15-item FAQ: `1_Documentation/FAQ.md`.
 
-## 7. Disclaimer / 免责声明
-
+## 8. Disclaimer / 免责声明
 **This software (VideoToolkit) is for learning and personal use only. Commercial use is prohibited. / 本软件（通用视频下载器）仅供学习交流使用，请勿用于商业用途。**
-
 1. **Purpose / 用途限制**: for learning browser automation, crawling, and audio/video processing only; download only content you are **entitled** to (your own works, authorized resources, public free content). / 本工具仅用于学习浏览器自动化、网络爬虫、音视频处理等技术原理，以及下载您**有权获取**的内容（如自己发布的作品、已获授权的资源、公开免费资源）。
 2. **Copyright / 版权提示**: content belongs to the original creators and platforms; do not download or redistribute protected content without authorization (paid films, member-only content, unauthorized reprints); support the original creators. / 各视频网站的内容版权归原作者及平台所有；未经版权方授权，请勿下载、传播受版权保护的内容（付费影视、会员专享、未授权转载等）；请尊重创作者与版权方权益，支持正版。
 3. **Responsibility / 使用责任**: users must follow local laws and the target site's Terms of Service; any legal consequences are the user's own responsibility. / 使用者应遵守所在国家/地区的法律法规及目标网站的《用户协议》《服务条款》；因使用本工具产生的任何法律后果，由使用者自行承担。
 4. **Technical boundary / 技术边界**: this tool contains no cracking or paywall-bypass features; logged-in/paid content is to be used within legal authorization; sites may change APIs or enable anti-crawling at any time. / 本工具不含任何破解、绕过付费或权限验证的功能；需要登录/付费的内容，请自行在合法授权范围内使用；目标网站可能随时调整接口或启用风控。
 5. **Site stability / 站点稳定性**: third-party sites (e.g., weak servers) may be temporarily unavailable due to rate limiting or maintenance; use responsibly and do not stress target sites. / 第三方站点（如服务器较弱的站点）可能因限流、维护等原因暂时不可用，请理性使用、合理控制访问频率，勿对目标网站造成压力。
-
 **Download only what you are entitled to; respect copyright. / 请仅下载您有权获取的内容，尊重版权方权益。**
-
 Full bilingual version: `1_Documentation/Disclaimer.md` / 完整中英双语版见 `1_Documentation/Disclaimer.md`。
