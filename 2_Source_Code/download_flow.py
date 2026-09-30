@@ -80,6 +80,18 @@ def download_episode_video(ep, series_dir, use_ffmpeg=True, progress_callback=No
     return ok, final_path, info
 
 
+def _next_numeric_dir(base):
+    """无剧名时生成递增数字目录名：video_001, video_002, ..."""
+    max_n = 0
+    try:
+        for d in os.listdir(base):
+            if d.startswith('video_') and d[6:].isdigit():
+                max_n = max(max_n, int(d[6:]))
+    except Exception:
+        pass
+    return f"video_{max_n + 1:03d}"
+
+
 def _derive_series_name(url):
     """从URL推导默认下载目录名"""
     host = urlparse(url).netloc
@@ -98,7 +110,7 @@ def run_direct_link(url, download_path=None, log=print, progress_callback=None,
         raise RuntimeError("请输入 http/https 开头的有效链接")
 
     base = ensure_dir(download_path) if download_path else ensure_dir(os.getcwd())
-    series_dir = ensure_dir(os.path.join(base, _derive_series_name(url)))
+    series_dir = ensure_dir(os.path.join(base, _next_numeric_dir(base)))
     vtype = 'hls' if is_hls_url(url) else 'direct'
     ep = {'episode_num': 1, 'title': 'video', 'video_url': url,
           'video_type': vtype, 'referer': None}
@@ -141,7 +153,7 @@ def run_auto_scan(crawler, url, keyword=None, download_path=None, log=print,
         log(f"扫描到 {len(eps)} 个视频（仅加载剧集表，未下载）")
         return {'eps': eps, 'total': len(eps)}
     log(f"扫描到 {len(eps)} 个视频，开始自动下载保存...")
-    series_name = sanitize_filename(keyword) if keyword else _derive_series_name(url)
+    series_name = sanitize_filename(keyword) if keyword else None
     return _download_episodes(eps, download_path, series_name, log, progress_callback,
                               max_workers, use_ffmpeg, timeout)
 
@@ -225,6 +237,9 @@ def run_site_download(crawler, name, episode_start=1, episode_end=0,
 def _download_episodes(eps, download_path, series_name, log, progress_callback,
                        max_workers, use_ffmpeg, timeout, episode_callback=None):
     base = ensure_dir(download_path) if download_path else ensure_dir(os.getcwd())
+    series_name = (series_name or '').strip()
+    if not series_name:
+        series_name = _next_numeric_dir(base)
     series_dir = ensure_dir(os.path.join(base, series_name))
 
     failed = []

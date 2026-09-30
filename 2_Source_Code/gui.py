@@ -14,6 +14,9 @@ from site_discovery import get_all_site_names, refresh_sites
 from video_crawler import VideoCrawler
 from download_flow import (run_direct_link, run_auto_scan, run_site_download,
                            _download_episodes, _derive_series_name)
+from ytdlp_page import YtdlpPage
+from res_downloader_page import ResDownloaderPage
+from converter_page import ConverterPage
 
 # ---------- 配色（与漫画下载器一致） ----------
 SIDEBAR_BG = "#1e293b"        # 侧栏底色 slate-800
@@ -124,6 +127,24 @@ class VideoDownloaderGUI:
                                           activeforeground=NAV_ACTIVE_TEXT,
                                           command=lambda: self._switch_page('password'))
         self.nav_password_btn.pack(fill=tk.X, padx=6, pady=2)
+        self.nav_ytdlp_btn = tk.Button(self.sidebar, text="🌐 通用下载", font=("微软雅黑", 11),
+                                       relief="flat", bd=0, anchor="w", padx=14,
+                                       bg=SIDEBAR_BG, fg=NAV_TEXT, activebackground=NAV_ACTIVE_BG,
+                                       activeforeground=NAV_ACTIVE_TEXT,
+                                       command=lambda: self._switch_page('ytdlp'))
+        self.nav_ytdlp_btn.pack(fill=tk.X, padx=6, pady=2)
+        self.nav_resdl_btn = tk.Button(self.sidebar, text="🔍 资源嗅探", font=("微软雅黑", 11),
+                                       relief="flat", bd=0, anchor="w", padx=14,
+                                       bg=SIDEBAR_BG, fg=NAV_TEXT, activebackground=NAV_ACTIVE_BG,
+                                       activeforeground=NAV_ACTIVE_TEXT,
+                                       command=lambda: self._switch_page('resdl'))
+        self.nav_resdl_btn.pack(fill=tk.X, padx=6, pady=2)
+        self.nav_converter_btn = tk.Button(self.sidebar, text="\U0001f3ac \u89c6\u9891\u8f6c\u6362", font=("\u5fae\u8f6f\u96c5\u9ed1", 11),
+                                           relief="flat", bd=0, anchor="w", padx=14,
+                                           bg=SIDEBAR_BG, fg=NAV_TEXT, activebackground=NAV_ACTIVE_BG,
+                                           activeforeground=NAV_ACTIVE_TEXT,
+                                           command=lambda: self._switch_page('converter'))
+        self.nav_converter_btn.pack(fill=tk.X, padx=6, pady=2)
         self.nav_settings_btn = tk.Button(self.sidebar, text="⚙ 设置", font=("微软雅黑", 11),
                                           relief="flat", bd=0, anchor="w", padx=14,
                                           bg=SIDEBAR_BG, fg=NAV_TEXT, activebackground=NAV_ACTIVE_BG,
@@ -375,6 +396,18 @@ class VideoDownloaderGUI:
                       "· 修改/清除密码需先回答创建时设置的安全问题；\n"
                       "· 程序复制给他人时，对方点「重置容器」即可清除原密码，设置自己的密码。",
                  font=("微软雅黑", 8), foreground="#94a3b8", justify=tk.LEFT).pack(anchor='w', padx=12)
+        # ---------- 通用下载页（yt-dlp 引擎，单开一页） ----------
+        self.page_ytdlp = ttk.Frame(self.main_frame)
+        self.page_ytdlp.pack_forget()
+        self.ytdlp_page = YtdlpPage(self.page_ytdlp, self)
+        # ---------- 资源嗅探下载页（res-downloader，单开一页） ----------
+        self.page_resdl = ttk.Frame(self.main_frame)
+        self.page_resdl.pack_forget()
+        self.resdl_page = ResDownloaderPage(self.page_resdl, self)
+        # ---------- \u89c6\u9891\u8f6c\u6362\u9875\uff08\u65e0\u635f\u683c\u5f0f\u8f6c\u6362\uff0c\u5355\u5f00\u4e00\u9875\uff09 ----------
+        self.page_converter = ttk.Frame(self.main_frame)
+        self.page_converter.pack_forget()
+        self.converter_page = ConverterPage(self.page_converter, self)
         self._refresh_password_page()
 
         self._switch_page('main')
@@ -385,23 +418,76 @@ class VideoDownloaderGUI:
             self.page_settings.pack_forget()
             if hasattr(self, 'page_password'):
                 self.page_password.pack_forget()
+            if hasattr(self, 'page_ytdlp'):
+                self.page_ytdlp.pack_forget()
+            if hasattr(self, 'page_resdl'):
+                self.page_resdl.pack_forget()
+            if hasattr(self, 'page_converter'):
+                self.page_converter.pack_forget()
             self.page_main.pack(fill=tk.BOTH, expand=True)
             self._update_nav_highlight('main')
         elif page == 'password':
             self.page_main.pack_forget()
             self.page_settings.pack_forget()
+            self.page_ytdlp.pack_forget()
+            if hasattr(self, 'page_resdl'):
+                self.page_resdl.pack_forget()
+            if hasattr(self, 'page_converter'):
+                self.page_converter.pack_forget()
             self.page_password.pack(fill=tk.BOTH, expand=True)
             self._update_nav_highlight('password')
             self._refresh_password_page()
+        elif page == 'ytdlp':
+            self.page_main.pack_forget()
+            self.page_settings.pack_forget()
+            if hasattr(self, 'page_password'):
+                self.page_password.pack_forget()
+            if hasattr(self, 'page_resdl'):
+                self.page_resdl.pack_forget()
+            if hasattr(self, 'page_converter'):
+                self.page_converter.pack_forget()
+            self.page_ytdlp.pack(fill=tk.BOTH, expand=True)
+            self._update_nav_highlight('ytdlp')
+        elif page == 'resdl':
+            self.page_main.pack_forget()
+            self.page_settings.pack_forget()
+            if hasattr(self, 'page_password'):
+                self.page_password.pack_forget()
+            if hasattr(self, 'page_ytdlp'):
+                self.page_ytdlp.pack_forget()
+            if hasattr(self, 'page_converter'):
+                self.page_converter.pack_forget()
+            self.page_resdl.pack(fill=tk.BOTH, expand=True)
+            self._update_nav_highlight('resdl')
+        elif page == 'converter':
+            self.page_main.pack_forget()
+            self.page_settings.pack_forget()
+            if hasattr(self, 'page_password'):
+                self.page_password.pack_forget()
+            if hasattr(self, 'page_ytdlp'):
+                self.page_ytdlp.pack_forget()
+            if hasattr(self, 'page_resdl'):
+                self.page_resdl.pack_forget()
+            self.page_converter.pack(fill=tk.BOTH, expand=True)
+            self._update_nav_highlight('converter')
         else:
             self.page_main.pack_forget()
             if hasattr(self, 'page_password'):
                 self.page_password.pack_forget()
+            if hasattr(self, 'page_ytdlp'):
+                self.page_ytdlp.pack_forget()
+            if hasattr(self, 'page_resdl'):
+                self.page_resdl.pack_forget()
+            if hasattr(self, 'page_converter'):
+                self.page_converter.pack_forget()
             self.page_settings.pack(fill=tk.BOTH, expand=True)
             self._update_nav_highlight('settings')
 
     def _update_nav_highlight(self, page):
         for btn, name, active in ((self.nav_main_btn, 'main', page == 'main'),
+                                  (self.nav_ytdlp_btn, 'ytdlp', page == 'ytdlp'),
+                                  (self.nav_resdl_btn, 'resdl', page == 'resdl'),
+                                  (self.nav_converter_btn, 'converter', page == 'converter'),
                                   (self.nav_settings_btn, 'settings', page == 'settings'),
                                   (self.nav_password_btn, 'password', page == 'password')):
             if active:
@@ -1323,7 +1409,7 @@ class VideoDownloaderGUI:
                 ep = {'episode_num': 1, 'title': 'video', 'video_url': addr,
                       'video_type': 'auto', 'referer': None}
                 eps = [ep]
-                series_name = _derive_series_name(addr)
+                series_name = ''  # 直接链接无剧名，下载时用数字目录
                 log("直接链接模式：已加入单集")
             else:
                 crawler_site = (opts.get('site') or '自动扫描') if (mode == '2' or (mode == '1' and not addr)) else '自动扫描'
@@ -1363,7 +1449,7 @@ class VideoDownloaderGUI:
                                                download_path=None, log=log,
                                                url_progress_callback=url_bump,
                                                collect_only=True)
-                        series_name = kw or _derive_series_name(addr)
+                        series_name = kw or ''  # 无剧名则下载时用数字目录
                     else:
                         result = run_site_download(crawler, addr, episode_start=opts.get('start', 1),
                                                    episode_end=0, download_path=None,
@@ -1741,7 +1827,7 @@ class VideoDownloaderGUI:
                 post(self._reset_seg)
 
             result = _download_episodes(
-                selected, download_path, self._series_name or '视频', log=log,
+                selected, download_path, self._series_name or '', log=log,
                 progress_callback=dl_cb,
                 max_workers=max_workers, use_ffmpeg=True, timeout=20,
                 episode_callback=ep_cb)

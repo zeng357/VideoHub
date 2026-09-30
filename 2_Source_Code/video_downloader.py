@@ -333,8 +333,11 @@ def _parse_variant(text, base_url):
                     key_uri = urljoin(base_url, uri)
                 ivm = _M3U8_IV.search(line)
                 iv_hex = ivm.group(1) if ivm else None
+            elif method.upper() == 'NONE':
+                # 无加密（METHOD=NONE），分片直接下载，无需解密
+                pass
             else:
-                # 非 AES-128 加密（如 SAMPLE-AES），无法处理
+                # 其他加密（如 SAMPLE-AES），无法处理
                 raise RuntimeError(f"不支持的加密方式: {method}")
         elif line.startswith('#EXTINF'):
             continue
@@ -392,9 +395,40 @@ def _download_segment(url, save_path, key, iv, index, referer, proxy, timeout):
     raise RuntimeError(last or '下载失败')
 
 
-def _has_ffmpeg():
+def _find_ffmpeg():
+    """定位 ffmpeg.exe：优先程序目录/核心目录/当前目录/脚本目录，最后查 PATH"""
+    bases = []
     try:
-        r = subprocess.run(['ffmpeg', '-version'], capture_output=True, timeout=8)
+        if getattr(sys, 'frozen', False):
+            exe_dir = os.path.dirname(sys.executable)
+            bases.append(exe_dir)
+            bases.append(os.path.join(exe_dir, '_internal'))
+    except Exception:
+        pass
+    bases += [os.getcwd(), os.path.dirname(os.path.abspath(__file__))]
+    for base in bases:
+        cand = os.path.join(base, 'ffmpeg.exe')
+        if os.path.isfile(cand):
+            return cand
+        cand2 = os.path.join(base, 'ffmpeg')
+        if os.path.isfile(cand2):
+            return cand2
+    try:
+        import shutil
+        w = shutil.which('ffmpeg')
+        if w:
+            return w
+    except Exception:
+        pass
+    return None
+
+
+def _has_ffmpeg():
+    ff = _find_ffmpeg()
+    if not ff:
+        return False
+    try:
+        r = subprocess.run([ff, '-version'], capture_output=True, timeout=8)
         return r.returncode == 0
     except Exception:
         return False
@@ -402,10 +436,14 @@ def _has_ffmpeg():
 
 def _remux_to_mp4(ts_path, mp4_path, log=print):
     """用 ffmpeg 把合并后的 .ts 转封装为 .mp4"""
+    ff = _find_ffmpeg()
+    if not ff:
+        log("  未找到 ffmpeg，跳过 mp4 封装（保留 .ts）")
+        return False
     log("  正在用 ffmpeg 封装为 mp4 ...")
     try:
         r = subprocess.run(
-            ['ffmpeg', '-y', '-i', ts_path, '-c', 'copy', '-bsf:a', 'aac_adtstoasc', mp4_path],
+            [ff, '-y', '-i', ts_path, '-c', 'copy', '-bsf:a', 'aac_adtstoasc', mp4_path],
             capture_output=True, timeout=600)
         if r.returncode == 0 and os.path.exists(mp4_path) and os.path.getsize(mp4_path) > 0:
             return True
@@ -496,33 +534,95 @@ def download_hls(m3u8_url, save_path, referer=None, progress=None, max_workers=6
                     f.cancel()
 
         if failed:
-            log(f"  {failed}/{total} 个分片 requests 下载失败，改用 ffmpeg 整段直下兜底 ...")
-            if use_ffmpeg and _has_ffmpeg():
-                ts_out = os.path.splitext(save_path)[0] + '.ts'
-                hdrs = {'User-Agent': _mk_headers(referer)['User-Agent'],
-                        'Referer': referer or ''}
-                hdr_str = '\\r\\n'.join(f'{k}: {v}' for k, v in hdrs.items() if v) + '\\r\\n'
-                cmd = ['ffmpeg', '-y', '-loglevel', 'error',
-                       '-headers', hdr_str, '-i', m3u8_url, '-c', 'copy', ts_out]
-                try:
-                    rr = subprocess.run(cmd, capture_output=True, timeout=3600)
-                except Exception as e:
-                    rr = None
-                    log(f"  ffmpeg 兜底异常: {str(e)[:60]}")
-                if rr is not None and rr.returncode == 0 and os.path.exists(ts_out) \
-                        and os.path.getsize(ts_out) > 0:
-                    final_path = ts_out
-                    mp4_path = os.path.splitext(save_path)[0] + '.mp4'
-                    if _remux_to_mp4(ts_out, mp4_path, log):
-                        final_path = mp4_path
+            # 对失败分片做第二轮单独重试（降低并发竞争、逐个重试）
+            retry_ids = [i for i in range(total)
+                         if not (os.path.exists(seg_files[i]) and os.path.getsize(seg_files[i]) > 0)]
+            if retry_ids:
+                log(f"  对 {len(retry_ids)} 个失败分片进行二次重试 ...")
+                import time as _t
+                for i in retry_ids[:5]:
+                    log(f"    分片{i}: {segments[i][:90]}")
+                for i in retry_ids:
+                    ok_i = False
+                    for attempt in range(3):
                         try:
-                            os.remove(ts_out)
+                            # 重试用更长超时 + 短暂随机延迟（避免被CDN限流）
+                            _t.sleep(0.3 + (i % 5) * 0.3)
+                            _download_segment(segments[i], seg_files[i], key, iv, i,
+                                              referer, proxy, max(timeout, 30))
+                            ok_i = True
+                            break
                         except Exception:
-                            pass
-                    log(f"  ffmpeg 兜底成功: {final_path}")
-                    return True, final_path, f"ffmpeg:{total} 分片"
-                log("  ffmpeg 兜底失败，保留已下载分片结果")
-            raise RuntimeError(f"{failed}/{total} 个分片下载失败")
+                            _t.sleep(0.6)
+                    if not ok_i:
+                        # 第三轮：更长等待（3/8/13秒）+ 去掉 Referer 再试（部分CDN拒绝带Referer）
+                        for attempt in range(3):
+                            try:
+                                _t.sleep(3 + attempt * 5)
+                                _download_segment(segments[i], seg_files[i], key, iv, i,
+                                                  None, proxy, max(timeout, 60))
+                                ok_i = True
+                                break
+                            except Exception:
+                                _t.sleep(2)
+            failed = sum(1 for i in range(total)
+                         if not (os.path.exists(seg_files[i]) and os.path.getsize(seg_files[i]) > 0))
+            if failed:
+                log(f"  {failed}/{total} 个分片仍失败，改用 ffmpeg 整段直下兜底 ...")
+                if use_ffmpeg and _has_ffmpeg():
+                    ts_out = os.path.splitext(save_path)[0] + '.ts'
+                    hdrs = {'User-Agent': _mk_headers(referer)['User-Agent'],
+                            'Referer': referer or ''}
+                    hdr_str = '\\r\\n'.join(f'{k}: {v}' for k, v in hdrs.items() if v) + '\\r\\n'
+                    cmd = [_find_ffmpeg(), '-y', '-loglevel', 'error',
+                           '-reconnect', '1', '-reconnect_streamed', '1',
+                           '-reconnect_delay_max', '30',
+                           '-headers', hdr_str, '-i', m3u8_url, '-c', 'copy', ts_out]
+                    try:
+                        rr = subprocess.run(cmd, capture_output=True, timeout=3600)
+                    except Exception as e:
+                        rr = None
+                        log(f"  ffmpeg 兜底异常: {str(e)[:60]}")
+                    if rr is not None and rr.returncode != 0:
+                        err_txt = (rr.stderr or b'').decode('utf-8', 'replace')[:300]
+                        log(f"  ffmpeg 兜底 stderr: {err_txt}")
+                    if rr is not None and rr.returncode == 0 and os.path.exists(ts_out) \
+                            and os.path.getsize(ts_out) > 0:
+                        final_path = ts_out
+                        mp4_path = os.path.splitext(save_path)[0] + '.mp4'
+                        if _remux_to_mp4(ts_out, mp4_path, log):
+                            final_path = mp4_path
+                            try:
+                                os.remove(ts_out)
+                            except Exception:
+                                pass
+                        log(f"  ffmpeg 兜底成功: {final_path}")
+                        return True, final_path, f"ffmpeg:{total} 分片"
+                    log("  ffmpeg 兜底失败")
+                # 合并已下载分片（>=60% 输出部分视频，避免整集全废）
+                got = total - failed
+                if got > 0 and got >= max(1, int(total * 0.6)):
+                    log(f"  合并已下载 {got}/{total} 个分片（部分失败，视频可能不完整）...")
+                    merged_ts = os.path.splitext(save_path)[0] + '.ts'
+                    with open(merged_ts, 'wb') as out:
+                        for f in seg_files:
+                            if os.path.exists(f) and os.path.getsize(f) > 0:
+                                with open(f, 'rb') as fh:
+                                    shutil.copyfileobj(fh, out)
+                    if os.path.getsize(merged_ts) > 0:
+                        final_path = merged_ts
+                        if use_ffmpeg and _has_ffmpeg():
+                            mp4_path = os.path.splitext(save_path)[0] + '.mp4'
+                            if _remux_to_mp4(merged_ts, mp4_path, log):
+                                final_path = mp4_path
+                                try:
+                                    os.remove(merged_ts)
+                                except Exception:
+                                    pass
+                        log(f"  \u26a0 \u5df2\u4fdd\u5b58\u4e0d\u5b8c\u6574\u89c6\u9891: {final_path} \uff08\u7f3a\u5931 {failed} \u4e2a\u5206\u7247\uff0c\u53ef\u91cd\u65b0\u4e0b\u8f7d\uff09")
+                        return True, final_path, f"partial:{got}/{total}"
+                raise RuntimeError(f"{failed}/{total} 个分片下载失败")
+
 
         # 5. 合并分片
         merged_ts = os.path.splitext(save_path)[0] + '.ts'
