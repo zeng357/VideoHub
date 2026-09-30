@@ -97,7 +97,7 @@ class GenericVideoCrawler:
         url = name.strip()
         if not is_normal_url(url):
             raise ValueError("请输入有效的 http/https 地址")
-        self.crawler.tab.get(url)
+        self.crawler.tab.get(url, timeout=10)
         self._log(f"已打开地址: {url}")
         time.sleep(3)
         return self.crawler.tab
@@ -132,7 +132,7 @@ class GenericVideoCrawler:
             if found:
                 self._log(f"已通过搜索定位到目标页: {found}")
                 try:
-                    target_tab.get(found)
+                    target_tab.get(found, timeout=10)
                     time.sleep(3)
                 except Exception as e:
                     self._log(f"打开目标页失败: {e}")
@@ -159,6 +159,14 @@ class GenericVideoCrawler:
 
     # ---- 递归扫描 ----
     def _scan_recursive(self, tab, keyword, depth, visited, budget, results, video_seen):
+        # 停止支持：点「停止爬取」后立即终止递归扫描（保留已找到的视频）
+        try:
+            _stop_fn = getattr(self.crawler, 'stop_collect', None)
+        except Exception:
+            _stop_fn = None
+        if _stop_fn is not None and _stop_fn():
+            self._log(f'[扫描] 收到停止指令，终止扫描（保留已找到的 {len(results)} 个视频）...')
+            return
         if budget['n'] <= 0 or depth > MAX_SCAN_DEPTH:
             return
 
@@ -186,8 +194,8 @@ class GenericVideoCrawler:
             # 播放器内嵌JSON（B站 __playinfo__ 等）：视频流+音频流分离
             pj = self._parse_player_json(tab)
             if pj:
-                vurl = pj.get('video_url')
-                audio_url = pj.get('audio_url')
+                vurl = pj.get('video_url', timeout=10)
+                audio_url = pj.get('audio_url', timeout=10)
                 vtype = 'dash'
                 self._log(f"  解析到播放器音视频流: {str(vurl)[:80]}")
         if vurl:
@@ -249,7 +257,7 @@ class GenericVideoCrawler:
             if budget['n'] <= 0:
                 break
             try:
-                tab.get(link['url'])
+                tab.get(link['url'], timeout=10)
                 time.sleep(2)
             except Exception as e:
                 self._log(f"  打开候选页失败: {e}")
@@ -275,7 +283,7 @@ class GenericVideoCrawler:
             search_url = f'https://cn.bing.com/search?q={q}'
         self._log(f"正在搜索定位: {search_url}")
         try:
-            tab.get(search_url)
+            tab.get(search_url, timeout=10)
             time.sleep(3)
         except Exception as e:
             self._log(f"搜索页打开失败: {e}")
@@ -398,7 +406,7 @@ class GenericVideoCrawler:
         """≥2个链接文本含"第X集/话/期"或纯数字集数 → 疑似剧集列表，应继续深入"""
         hits = 0
         for l in links:
-            t = (l.get('title') or '').strip()
+            t = (l.get('title', timeout=10) or '').strip()
             if _EPISODE_TITLE_RE.search(t):
                 hits += 1
             elif t.isdigit() and len(t) <= 8:  # 纯数字集数（1、2、3 或 01、02）
@@ -410,12 +418,12 @@ class GenericVideoCrawler:
     @staticmethod
     def _is_episode_link(link):
         """判断链接是否指向单集（标题含集数标记/纯数字，或URL带剧集特征）"""
-        t = (link.get('title') or '').strip()
+        t = (link.get('title', timeout=10) or '').strip()
         if _EPISODE_TITLE_RE.search(t):
             return True
         if t.isdigit() and len(t) <= 8:
             return True
-        u = (link.get('url') or '').lower()
+        u = (link.get('url', timeout=10) or '').lower()
         return bool(re.search(r'/(play|watch|episode|vod)/|\w{2}\d{5,}_\d+', u))
 
     # ---- 候选链接 ----
@@ -604,14 +612,14 @@ class GenericVideoCrawler:
         except Exception:
             return None
         d = (data or {}).get('data') or {}
-        dash = d.get('dash') or {}
-        v = self._pick_dash(dash.get('video'))
-        a = self._pick_dash(dash.get('audio'))
+        dash = d.get('dash', timeout=10) or {}
+        v = self._pick_dash(dash.get('video', timeout=10))
+        a = self._pick_dash(dash.get('audio', timeout=10))
         if v and a:
             return {'video_url': v, 'audio_url': a}
         if v:
             return {'video_url': v, 'audio_url': None}
-        durl = d.get('durl') or []
+        durl = d.get('durl', timeout=10) or []
         if durl and durl[0].get('url'):
             return {'video_url': durl[0]['url'], 'audio_url': None}
         return None
@@ -621,12 +629,12 @@ class GenericVideoCrawler:
         """从DASH流列表挑选清晰度最高的可用地址"""
         if not items:
             return None
-        ok = [it for it in items if it.get('baseUrl') or it.get('backupUrl')]
+        ok = [it for it in items if it.get('baseUrl', timeout=10) or it.get('backupUrl', timeout=10)]
         if not ok:
             return None
-        ok.sort(key=lambda x: int(x.get('id') or 0), reverse=True)
+        ok.sort(key=lambda x: int(x.get('id', timeout=10) or 0), reverse=True)
         it = ok[0]
-        url = it.get('baseUrl') or ''
-        if not url and it.get('backupUrl'):
+        url = it.get('baseUrl', timeout=10) or ''
+        if not url and it.get('backupUrl', timeout=10):
             url = it['backupUrl'][0]
         return url or None

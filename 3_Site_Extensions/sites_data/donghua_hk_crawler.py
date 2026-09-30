@@ -18,6 +18,10 @@ _RE_A_DETAIL = re.compile(
     r'<a[^>]+href="([^"]*(?:/show/|/detail/|/vod/detail/|/video-detail/|/vodk?/|/vod/\d+\.html|'
     r'/index\.php/vod/show/|/index\.php/vod/detail/|/vod-detail-|\?m=vod-detail)[^"]*)"[^>]*>([^<]{0,40})</a>',
     re.S)
+_RE_A_BLOCK = re.compile(
+    r'<a[^>]*href="([^"]*(?:/show/|/detail/|/vod/detail/|/video-detail/|/vodk?/|/vod/\d+\.html|'
+    r'/index\.php/vod/show/|/index\.php/vod/detail/|/vod-detail-|\?m=vod-detail)[^"]*)"[^>]*>(.*?)</a>',
+    re.S)
 _RE_PLAY = re.compile(
     r'href="([^"]*(?:/play/|/vodplay/|/video-play/|/vodk-play/|/playk/|/vodk-/|/vodp/|/vod/play/|'
     r'/index\.php/vod/play/|/vod-play-|\?m=vod-play)[^"]*)"')
@@ -169,6 +173,36 @@ class DonghuaHKCrawler:
         except Exception:
             pass
 
+    # 名称中文化：动漫常见英文词汇 → 中文（无法翻译的保留原文）
+    _CN_WORD_MAP = [
+        ('剧场版', '剧场版'), ('movie', '剧场版'), ('Movie', '剧场版'),
+        ('season', '季'), ('Season', '季'), ('S1', '第1季'), ('S2', '第2季'),
+        ('S3', '第3季'), ('S4', '第4季'), ('S5', '第5季'),
+        ('part', '篇'), ('Part', '篇'),
+        ('special', '特别篇'), ('Special', '特别篇'), ('SP', '特别篇'),
+        ('ova', '特别篇'), ('Ova', '特别篇'), ('OVA', '特别篇'),
+        ('oad', '特别篇'), ('Oad', '特别篇'), ('OAD', '特别篇'),
+        ('episode', '集'), ('Episode', '集'), ('EP', '集'),
+        ('国语', '国语版'), ('粤语', '粤语版'),
+        ('普通话', '普通话版'),
+    ]
+
+    @classmethod
+    def _clean_cn_name(cls, text):
+        """清洗候选名称：去站点后缀、英文常用词转中文、规范化空格"""
+        if not text:
+            return ''
+        s = text.strip()
+        # 去掉 "xxx-免费资源 - 免费观看" 等站点尾巴
+        s = re.sub(r'[-－]\s*(免费资源|免费观看|在线观看|樱花动漫|AGE动漫).*$', '', s).strip()
+        s = re.sub(r'\s*[-－]\s*$', '', s).strip()
+        # 常用英文词 → 中文
+        for en, cn in cls._CN_WORD_MAP:
+            s = re.sub(r'(?<![A-Za-z0-9])' + re.escape(en) + r'(?![A-Za-z0-9])', cn, s)
+        # 折叠多余空格
+        s = re.sub(r'\s+', ' ', s).strip()
+        return s[:60]
+
     @staticmethod
     def _page_title(tab):
         try:
@@ -200,6 +234,7 @@ class DonghuaHKCrawler:
             self._log(f'[搜索] 尝试: {url}')
             try:
                 self.crawler.tab.get(url, timeout=10)
+                self._log('  页面已打开，等待匹配结果...')
             except Exception as e:
                 self._log(f'  打开失败: {str(e)[:60]}')
                 continue
@@ -208,9 +243,20 @@ class DonghuaHKCrawler:
             # 仅确认是搜索结果页时放宽匹配（避免把主页/404页误判为命中）
             is_search_page = ('搜索' in title
                               or '/search/' in url.lower()
-                              or '/video-search/' in url.lower())
+                              or '/video-search/' in url.lower()
+                              or '/video-play/' in url.lower()
+                              or '在线播放' in title)
             detail = self._wait_detail_link(keyword=name, timeout=4, relax=is_search_page)
             if detail:
+                # 多结果选择：搜索页有多个分季/分篇/版本时让用户在GUI选择
+                try:
+                    html_now = self.crawler.tab.html or ''
+                except Exception:
+                    html_now = ''
+                cands = self._collect_candidates(html_now, name)
+                if cands and not any(c[1] == detail for c in cands):
+                    cands.insert(0, ('', detail))
+                detail = self._resolve_candidates(cands) or detail
                 self._log(f'  搜索命中: {detail}')
                 self.crawler.tab.get(detail, timeout=10)
                 time.sleep(4)
@@ -318,11 +364,29 @@ class DonghuaHKCrawler:
 
     def _match_detail(self, html, kw, relax=False):
         hits = []
-        for m in _RE_A_DETAIL.finditer(html):
+        seen_href = set()
+        # 块级提取：兼容苹果CMS 卡片式结构（名称在 <img alt> 或块内文本）
+        for m in _RE_A_BLOCK.finditer(html):
             href = m.group(1).replace('&amp;', '&')
-            text = m.group(2).strip()
             full = urljoin(self.SITE_URL, href)
+            if full in seen_href:
+                continue
+            seen_href.add(full)
+            block = m.group(2)
+            am = re.search(r'alt="([^"]{2,60})"', block)
+            if am and am.group(1).strip():
+                text = am.group(1).strip()
+            else:
+                text = re.sub(r'<[^>]+>', ' ', block)
+                text = re.sub(r'\s+', ' ', text).strip()[:40]
             hits.append((full, text))
+        if not hits:
+            # 旧式内联文本结构兜底
+            for m in _RE_A_DETAIL.finditer(html):
+                href = m.group(1).replace('&amp;', '&')
+                text = (m.group(2) or '').strip()
+                full = urljoin(self.SITE_URL, href)
+                hits.append((full, text))
         if not hits:
             seen = set()
             for m in _RE_DETAIL.finditer(html):
@@ -341,6 +405,90 @@ class DonghuaHKCrawler:
         elif hits:
             return hits[0][0]
         return None
+
+    # ---------- 多结果候选选择（通用：分季/篇/多部时让用户在GUI选择） ----------
+    def _collect_candidates(self, html, kw, limit=80):
+        """收集搜索结果候选 [(名称, 详情URL)]：
+        1) 优先限定在搜索结果容器（ul.vodlist/搜索列表）内，避免混入侧边栏推荐；
+        2) 同一URL多个链接（封面/名称/状态）聚合后选最佳名称（过滤“更新至第X集/查看详情”等状态文本）；
+        3) 关键词命中的候选优先且只弹关键词相关的，无命中时才放宽。
+        """
+        _BAD_NAME = re.compile(r'^(更新至|连载至|共\d+集|第\d+[集话]|查看详情|立即播放|点击播放|在线播放|免费观看|播放|详情|全集|完结|已完结)')
+        _BAD_FULL = re.compile(r'^(大会员|会员|独家|国创|客户端|首页|番剧|直播|游戏中心|漫画|赛事|搜索|综合|影视|专栏|用户|登录|注册|立即观看|资源详情|更多筛选|综合排序|最多播放|最新发布|最多弹幕|最多收藏|下载客户端|全部|选集|选集|追番|关注)')
+        scope_htmls = []
+        for m in re.finditer(
+                r'<ul[^>]*class="[^"]*(?:vodlist|search|module-list|content-list|video-list)[^"]*"[^>]*>(.*?)</ul>',
+                html or '', re.S):
+            scope_htmls.append(m.group(1))
+        if not scope_htmls:
+            scope_htmls = [html or '']
+        # 按 URL 聚合全部文本
+        agg = {}
+        for scope in scope_htmls:
+            for m in _RE_A_BLOCK.finditer(scope):
+                href = m.group(1).replace('&amp;', '&')
+                full = urljoin(self.SITE_URL, href)
+                block = m.group(2)
+                am = re.search(r'alt="([^"]{2,60})"', block)
+                if am and am.group(1).strip():
+                    text = am.group(1).strip()
+                else:
+                    text = re.sub(r'<[^>]+>', ' ', block)
+                    text = re.sub(r'\s+', ' ', text).strip()[:40]
+                text = self._clean_cn_name(text)
+                if text:
+                    agg.setdefault(full, []).append(text)
+
+        def best_text(texts):
+            if not texts:
+                return ''
+            if kw:
+                for tx in texts:
+                    if kw in tx and not _BAD_FULL.search(tx):
+                        return tx
+            good = [tx for tx in texts if not _BAD_NAME.search(tx) and not _BAD_FULL.search(tx)]
+            if good:
+                return max(good, key=len)[:60]
+            meaningful = [tx for tx in texts if not _BAD_FULL.search(tx)]
+            if meaningful:
+                return max(meaningful, key=len)[:60]
+            return ''
+
+        items = [(best_text(texts), full) for full, texts in agg.items()]
+        items = [(n or '（未命名）', u) for n, u in items if n]
+        if not items:
+            return []
+        # 关键词命中的候选排前；有命中时只保留命中项（避免弹窗混入无关推荐）
+        if kw:
+            matched = [(n, u) for n, u in items if kw in n or kw in u.lower()]
+            if matched:
+                items = matched
+        # 名称去重
+        dedup, seen_n = [], set()
+        for n, u in items:
+            if n in seen_n:
+                continue
+            seen_n.add(n)
+            dedup.append((n, u))
+        return dedup[:limit]
+
+    def _resolve_candidates(self, candidates, kw=''):
+        """候选>1 时调用 choose_candidate 回调（GUI 选择窗）返回选中URL；否则返回第一个"""
+        if not candidates:
+            return None
+        if len(candidates) <= 1:
+            return candidates[0][1]
+        crawler_obj = getattr(self, 'crawler', None)
+        chooser = (getattr(crawler_obj, 'choose_candidate', None)
+                   if crawler_obj is not None else None) or getattr(self, 'choose_candidate', None)
+        if chooser:
+            try:
+                picked = chooser(candidates)
+                if picked:
+                    return picked
+            except Exception as e:
+                self._log(f'  候选选择异常({str(e)[:40]})，取第一个')
+        return candidates[0][1]
 
     def _wait_detail_link(self, keyword=None, timeout=8, relax=False):
         """轮询等待页面出现详情链接；relax=True 时无关键词命中也取第一个（搜索页场景）"""
@@ -459,7 +607,15 @@ class DonghuaHKCrawler:
 
         # 2) 失败项回退：浏览器逐页打开（逐线路尝试）
         errs = []
+        _stop_fn = None
+        try:
+            _stop_fn = getattr(self.crawler, 'stop_collect', None)
+        except Exception:
+            _stop_fn = None
         for link, num in missing:
+            if _stop_fn is not None and _stop_fn():
+                self._log(f'[收集] 停止回退流程，已保留 {len(eps)} 集...')
+                break
             hrefs = line_map.get(num) or [(99, link)]
             ep = None
             used = []
@@ -536,17 +692,43 @@ class DonghuaHKCrawler:
                     _time.sleep(0.6 * (attempt + 1))
                 if len(hrefs) > 1:
                     self._log(f'  第{num}集 线路{_sid}不可用，切换下一线路...')
-            if num <= 5 or num % 50 == 0:
-                self._log(f'  [收集] 第{num}集请求失败({last})，稍后浏览器兜底')
+            self._log(f'  [收集] 第{num}集请求失败({last})，稍后浏览器兜底')
             return None
 
         eps = []
-        with cf.ThreadPoolExecutor(max_workers=_max) as ex:
-            for ep in ex.map(one, items):
+        stop_fn = None
+        try:
+            stop_fn = getattr(self.crawler, 'stop_collect', None)
+        except Exception:
+            stop_fn = None
+        # 不用 with 块：停止时 shutdown(wait=False) 立即返回，不等正在跑的worker，
+        # 避免「点了停止要等几十秒才生效」的卡顿感（后台worker跑完结果丢弃，无害）
+        ex = cf.ThreadPoolExecutor(max_workers=_max)
+        try:
+            futures = {ex.submit(one, it): it for it in items}
+            while futures:
+                if stop_fn is not None and stop_fn():
+                    self._log(f'[收集] 收到停止指令，保留已完成的 {len(eps)} 集...')
+                    for f in list(futures):
+                        f.cancel()
+                    break
+                try:
+                    f = next(cf.as_completed(futures, timeout=0.5))
+                except StopIteration:
+                    break
+                except cf.TimeoutError:
+                    continue
+                futures.pop(f, None)
+                ep = f.result()
                 if ep:
                     eps.append(ep)
                     if progress_callback:
                         progress_callback()  # 仅成功计一次，避免与浏览器兜底重复计数
+        finally:
+            try:
+                ex.shutdown(wait=False)
+            except Exception:
+                pass
         return eps
 
     # ---------- 单集视频源提取 ----------

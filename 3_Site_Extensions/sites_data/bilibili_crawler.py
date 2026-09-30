@@ -65,6 +65,15 @@ class BilibiliCrawler:
     def __init__(self, crawler):
         self.crawler = crawler
 
+    def _log(self, msg):
+        """向 GUI 日志通道输出（无则静默）"""
+        try:
+            cb = getattr(self.crawler, 'log_callback', None)
+            if cb:
+                cb(msg)
+        except Exception:
+            pass
+
     # ---------- 浏览器 Cookie 透传 ----------
     @staticmethod
     def _tab_cookie_str(tab):
@@ -98,18 +107,85 @@ class BilibiliCrawler:
             pass
         return {}
 
+    _BILI_BAD_WORD = re.compile(
+        r'^(大会员|会员|独家|国创|客户端|首页|番剧|直播|游戏中心|漫画|赛事|搜索|综合|影视|专栏|用户|登录|注册|立即观看|在线播放|资源详情|更多筛选|下载客户端|全部|选集|追番|关注)\s*$')
+
+    def _bili_candidate_name(self, text, full):
+        """B站候选名称：逐行跳过角标词，取第一行有意义标题；取不到时用类型+ID"""
+        if text:
+            for ln in text.strip().split('\n'):
+                s = ln.strip()
+                if not s:
+                    continue
+                # 跳过"大会员/会员/国创"等无意义角标行
+                if self._BILI_BAD_WORD.search(s):
+                    continue
+                s = re.sub(r'\s+', ' ', s).strip()
+                s = re.sub(r'[|｜]\s*\d+[万wW]?.*$', '', s).strip()
+                s = re.sub(r'\d+[万wW]?播放.*$', '', s).strip()
+                for cut in ('配音:', '简介:', '评分', '立即观看', '弹幕'):
+                    idx = s.find(cut)
+                    if idx > 0:
+                        s = s[:idx].strip()
+                        break
+                if s and len(s) <= 60:
+                    return s
+        if '/bangumi/play/' in full:
+            return 'B站番剧 ' + full.rstrip('/').rsplit('/', 1)[-1]
+        if full:
+            return 'B站视频 ' + full.rstrip('/').rsplit('/', 1)[-1]
+        return ''
+
+    def _extract_bili_name(self, ele):
+        """B站候选名称：封面img alt优先（封面alt=标题），其次链接文本，再父容器文本"""
+        # 1) 链接内封面图 alt
+        try:
+            img = ele.ele('tag:img', timeout=0)
+            if img is not None:
+                alt = (img.attr('alt') or '').strip()
+                if alt and len(alt) >= 2 and not self._BILI_BAD_WORD.search(alt[:12]):
+                    return alt[:60]
+        except Exception:
+            pass
+        # 2) 链接自身文本（跳过角标行）
+        try:
+            t = (ele.text or '').strip()
+        except Exception:
+            t = ''
+        if t:
+            cleaned = self._bili_candidate_name(t, '')
+            if cleaned and len(cleaned) >= 2:
+                return cleaned
+        # 3) 向上找含文本的父容器
+        try:
+            p = ele
+            for _ in range(5):
+                p = p.parent
+                if p is None:
+                    break
+                pt = (p.text or '').strip()
+                if pt:
+                    cleaned = self._bili_candidate_name(pt, '')
+                    if cleaned and len(cleaned) >= 2:
+                        return cleaned
+        except Exception:
+            pass
+        return '（未命名）'
+
     # ---- 搜索 ----
     def search_series(self, name, series_id=None):
         """name = 视频标题/BV链接/av号；返回已打开视频页（或番剧页）的标签"""
         name = name.strip()
         if is_normal_url(name):
-            self.crawler.tab.get(name)
-            time.sleep(5)
+            self._log(f'[搜索] 直链打开: {name}')
+            self.crawler.tab.get(name, timeout=10)
+            time.sleep(3)
             return self.crawler.tab
 
         search_url = 'https://search.bilibili.com/all?keyword=' + quote(name)
-        self.crawler.tab.get(search_url)
-        time.sleep(5)
+        self._log(f'[搜索] B站搜索: {search_url}')
+        self.crawler.tab.get(search_url, timeout=10)
+        time.sleep(3)
         kw = name.lower()
         try:
             a_eles = self.crawler.tab.eles('tag:a', timeout=5)
@@ -117,17 +193,18 @@ class BilibiliCrawler:
             a_eles = []
 
         def _score(full, text):
-            # 普通视频优先；番剧正片其次；文本/URL 含关键词 +2
+            # 番剧正片优先；普通视频其次；文本/URL 含关键词 +2
             s = 0
-            if '/video/BV' in full:
+            if '/bangumi/play/' in full:
                 s += 3
-            elif '/bangumi/play/' in full:
+            elif '/video/BV' in full:
                 s += 2
             if kw and (kw in full.lower() or kw in text.lower()):
                 s += 2
             return s
 
-        best, best_score = None, 0
+        # 收集全部相关候选（番剧/视频），供弹窗选择
+        cands, seen = [], set()
         for ele in a_eles[:500]:
             try:
                 href = ele.attr('href') or ''
@@ -137,13 +214,50 @@ class BilibiliCrawler:
             full = urljoin('https://www.bilibili.com', href)
             if '/video/BV' not in full and '/bangumi/play/' not in full:
                 continue
-            s = _score(full, text)
-            if s > best_score:
-                best, best_score = full, s
-        if not best:
+            if full in seen:
+                continue
+            seen.add(full)
+            cands.append((self._extract_bili_name(ele), full))
+        # 关键词过滤（避免混入无关链接）
+        if kw:
+            matched = [(n, u) for n, u in cands if kw in n.lower() or kw in u.lower()]
+            if matched:
+                cands = matched
+            else:
+                # 关键词全不匹配：丢弃明显无意义的名称候选
+                cands = [(n, u) for n, u in cands
+                         if n != '（未命名）' and not BilibiliCrawler._BILI_BAD_WORD.search(n[:12])]
+        # 名称去重
+        dedup, seen_n = [], set()
+        for n, u in cands:
+            if n in seen_n:
+                continue
+            seen_n.add(n)
+            dedup.append((n, u))
+        cands = dedup
+        # 番剧（正片/剧场版）全保留，UP主视频最多留5个，弹窗更清晰
+        bangumi_cands = [c for c in cands if '/bangumi/play/' in c[1]]
+        bv_cands = [c for c in cands if '/video/BV' in c[1]][:5]
+        cands = bangumi_cands + bv_cands
+        if not cands:
             raise ValueError(f"未在B站搜索结果中找到「{name}」的视频/番剧，请确认名称或直接粘贴链接")
-        self.crawler.tab.get(best)
-        time.sleep(5)
+        # 多结果弹窗（番剧/剧场版/UP主合集等），无弹窗时按评分取最优
+        if len(cands) > 1:
+            self._log(f'[搜索] B站找到 {len(cands)} 个候选，等待选择...')
+            chooser = getattr(self.crawler, 'choose_candidate', None)
+            if chooser:
+                try:
+                    picked = chooser(cands)
+                    best = picked or max(cands, key=lambda c: _score(c[1], c[0]))[1]
+                except Exception:
+                    best = max(cands, key=lambda c: _score(c[1], c[0]))[1]
+            else:
+                best = max(cands, key=lambda c: _score(c[1], c[0]))[1]
+        else:
+            best = cands[0][1]
+        self._log(f'[搜索] 命中: {best}')
+        self.crawler.tab.get(best, timeout=10)
+        time.sleep(3)
         return self.crawler.tab
 
     def get_episode_count(self, target_tab):
@@ -272,9 +386,17 @@ class BilibiliCrawler:
         start = max(episode_start, 1)
         end = min(episode_end, total) if episode_end > 0 else total
 
-        # 3. 逐集取播放地址
+        # 3. 逐集取播放地址（支持停止：点「停止爬取」立即保留已完成集数）
+        stop_fn = None
+        try:
+            stop_fn = getattr(self.crawler, 'stop_collect', None)
+        except Exception:
+            stop_fn = None
         eps, errs = [], []
         for i, epm in enumerate(meta[start - 1:end], start=start):
+            if stop_fn is not None and stop_fn():
+                self._log(f'[收集] B站番剧收到停止指令，保留已完成的 {len(eps)} 集...')
+                break
             play_url = (f'https://api.bilibili.com/pgc/player/web/playurl?'
                         f'ep_id={epm["ep_id"]}&qn=127&fnval=16&fourk=1')
             data = self._api_get(play_url, cookie, referer)

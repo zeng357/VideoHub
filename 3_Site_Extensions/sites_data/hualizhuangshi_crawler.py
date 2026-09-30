@@ -51,6 +51,7 @@ class HualizhuangshiCrawler(_BaseCrawler):
             self._log(f'[搜索] 尝试: {url}')
             try:
                 self.crawler.tab.get(url, timeout=10)
+                self._log('  页面已打开，等待匹配结果...')
             except Exception as e:
                 self._log(f'  打开失败: {str(e)[:60]}')
                 continue
@@ -61,6 +62,15 @@ class HualizhuangshiCrawler(_BaseCrawler):
                               or '/video-search/' in url.lower())
             detail = self._wait_detail_link(keyword=name, timeout=4, relax=is_search_page)
             if detail:
+                # 多结果选择：搜索页有多个分季/分篇/版本时让用户在GUI选择
+                try:
+                    html_now = self.crawler.tab.html or ''
+                except Exception:
+                    html_now = ''
+                cands = self._collect_candidates(html_now, name)
+                if cands and not any(c[1] == detail for c in cands):
+                    cands.insert(0, ('', detail))
+                detail = self._resolve_candidates(cands) or detail
                 self._log(f'  搜索命中: {detail}')
                 self.crawler.tab.get(detail, timeout=10)
                 time.sleep(4)
